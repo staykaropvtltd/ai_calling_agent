@@ -1,0 +1,83 @@
+# ============================================
+# STAYKARO AI CALLER — .gitignore
+# ============================================
+
+# --- Environment & Secrets ---
+.env
+.env.local
+.env.production
+.env.development
+*.pem
+*.key
+*.cert
+**/secrets/
+!**/secrets/.gitkeep
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+wheels/
+*.whl
+venv/
+.venv/
+env/
+.ropeproject/
+*.pyc
+
+# --- Node / Next.js ---
+node_modules/
+.next/
+out/
+build/
+dist/
+.npm/
+.yarn/
+*.tsbuildinfo
+next-env.d.ts
+
+# --- Docker ---
+.docker/
+*.log
+
+# --- IDE & Editors ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# --- Testing & Coverage ---
+.coverage
+htmlcov/
+.pytest_cache/
+.coverage.*
+*.coverage
+hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# --- Logs ---
+*.log
+logs/
+/var/log/
+
+# --- Monitoring ---
+infrastructure/monitoring/otel-collector-data/
+infrastructure/monitoring/prometheus-data/
+infrastructure/monitoring/grafana-data/
