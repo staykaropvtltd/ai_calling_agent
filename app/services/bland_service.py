@@ -1,6 +1,9 @@
 import requests
+import uuid
+
 from app.config.settings import BLAND_API_KEY
 from app.schemas.caller import CallerRequest
+from app.services.redis_service import save_call_session
 
 
 def trigger_bland_call(request: CallerRequest):
@@ -45,4 +48,20 @@ Keep the conversation friendly and professional.
         json=payload
     )
 
-    return response.json()
+    response_data = response.json()
+
+    call_id = response_data.get("call_id", str(uuid.uuid4()))
+
+    save_call_session(
+        call_id,
+        {
+            "customer_name": request.customer_name,
+            "phone_number": request.phone_number,
+            "hotel_name": request.hotel_name,
+            "check_in_date": request.check_in_date,
+            "check_out_date": request.check_out_date,
+            "status": "initiated"
+        }
+    )
+
+    return response_data
