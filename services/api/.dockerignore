@@ -1,0 +1,54 @@
+# ============================================
+# STAYKARO AI CALLER — API Service .dockerignore
+# ============================================
+
+# --- Version control ---
+.git
+.gitignore
+
+# --- Python artifacts ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+wheels/
+*.whl
+.venv
+venv/
+env/
+
+# --- Environment & secrets ---
+.env
+.env.*
+*.pem
+*.key
+*.cert
+**/secrets/
+
+# --- IDE & editors ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Docker ---
+.docker/
+
+# --- Testing & linting ---
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# --- Logs ---
+*.log
+logs/
