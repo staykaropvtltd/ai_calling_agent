@@ -1,5 +1,4 @@
 import requests
-import uuid
 
 from app.config.settings import BLAND_API_KEY
 from app.schemas.caller import CallerRequest
@@ -42,15 +41,43 @@ Keep the conversation friendly and professional.
 """
     }
 
-    response = requests.post(
-        url,
-        headers=headers,
-        json=payload
-    )
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=10
+        )
 
-    response_data = response.json()
+        response.raise_for_status()
+        response_data = response.json()
 
-    call_id = response_data.get("call_id", str(uuid.uuid4()))
+    except requests.exceptions.Timeout:
+        return {
+            "status": "error",
+            "message": "Bland AI request timed out"
+        }
+
+    except requests.exceptions.RequestException as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+    except ValueError:
+        return {
+            "status": "error",
+            "message": "Invalid response from Bland AI"
+        }
+
+    call_id = response_data.get("call_id")
+
+    if not call_id:
+        return {
+            "status": "error",
+            "message": "Bland AI did not return call_id",
+            "bland_response": response_data
+        }
 
     save_call_session(
         call_id,
