@@ -7,6 +7,10 @@
 .env.local
 .env.production
 .env.development
+.env.*
+!.env.example
+.envrc
+
 *.pem
 *.key
 *.cert
@@ -81,3 +85,10 @@ logs/
 infrastructure/monitoring/otel-collector-data/
 infrastructure/monitoring/prometheus-data/
 infrastructure/monitoring/grafana-data/
+
+# --- SQLite Database ---
+*.db
+*.sqlite
+*.sqlite3
+*.db-*
+*.sqlite-*
