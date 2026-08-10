@@ -1,0 +1,2 @@
+pipecat-ai[websocket]==1.7.0
+uvicorn[standard]

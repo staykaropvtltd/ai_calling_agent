@@ -1,11 +1,77 @@
+from __future__ import annotations
+
+from fastapi import FastAPI, WebSocket
 from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.transports.websocket.fastapi import (
+    FastAPIWebsocketParams,
+    FastAPIWebsocketTransport,
+)
+
+from call_session import CallSessionManager
 
 
-async def main():
-    print("StayKaro voice gateway started")
+app = FastAPI(title="StayKaro Voice Gateway")
+
+session_manager = CallSessionManager()
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.websocket("/ws/{call_id}")
+async def voice_websocket(websocket: WebSocket, call_id: str) -> None:
+    await websocket.accept()
+
+    session_manager.create(
+        call_id=call_id,
+        tenant_id="unknown",
+        agent_id="unknown",
+    )
+
+    transport = FastAPIWebsocketTransport(
+        websocket,
+        FastAPIWebsocketParams(
+            audio_in_enabled=False,
+            audio_out_enabled=False,
+        ),
+    )
+
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            transport.output(),
+        ]
+    )
+
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(),
+        conversation_id=call_id,
+    )
+
+    runner = PipelineRunner(handle_sigint=False)
+
+    try:
+        await runner.run(task)
+    finally:
+        session = session_manager.get(call_id)
+
+        if session is not None:
+            session_manager.end(call_id)
+
+        session_manager.remove(call_id)
+        await transport.cleanup()
 
 
 if __name__ == "__main__":
-    import asyncio
+    import uvicorn
 
-    asyncio.run(main())
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=9000,
+    )
