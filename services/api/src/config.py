@@ -7,9 +7,6 @@ load_dotenv()
 
 logger = logging.getLogger("staykaro.config")
 
-# ── External APIs ─────────────────────────────────────────────────────────────
-BLAND_API_KEY: str = os.getenv("BLAND_API_KEY", "")
-
 # ── Redis ─────────────────────────────────────────────────────────────────────
 REDIS_URL: str = os.getenv("REDIS_URL", "")
 
@@ -64,8 +61,6 @@ def validate_startup_config() -> None:
             f"Critical env vars missing — cannot start: {', '.join(critical_missing)}"
         )
 
-    if not BLAND_API_KEY:
-        logger.warning("BLAND_API_KEY not set — /call will error on the Bland AI step")
     if not REDIS_URL:
         logger.warning("REDIS_URL not set — call sessions will not be persisted")
     if not API_PASSWORD:

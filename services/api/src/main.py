@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import re
@@ -8,7 +7,6 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import redis
-import requests
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, field_validator
@@ -19,7 +17,6 @@ from src.auth import create_access_token, get_current_user
 from src.config import (
     API_PASSWORD,
     API_USERNAME,
-    BLAND_API_KEY,
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
     REDIS_URL,
     validate_startup_config,
@@ -80,23 +77,23 @@ async def request_logging(request: Request, call_next):
 _redis = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
 
 
-def _save_session(call_id: str, data: dict) -> None:
+def _save_session(session_id: str, data: dict) -> None:
     if not _redis:
         return
     try:
-        _redis.set(f"call:{call_id}", json.dumps(data), ex=3600)
+        _redis.set(f"call:{session_id}", json.dumps(data), ex=3600)
     except redis.RedisError as exc:
-        logger.warning("Redis write error for call:%s — %s", call_id, exc)
+        logger.warning("Redis write error for call:%s — %s", session_id, exc)
 
 
-def _get_session(call_id: str) -> Optional[dict]:
+def _get_session(session_id: str) -> Optional[dict]:
     if not _redis:
         return None
     try:
-        raw = _redis.get(f"call:{call_id}")
+        raw = _redis.get(f"call:{session_id}")
         return json.loads(raw) if raw else None
     except redis.RedisError as exc:
-        logger.warning("Redis read error for call:%s — %s", call_id, exc)
+        logger.warning("Redis read error for call:%s — %s", session_id, exc)
         return None
 
 
@@ -125,71 +122,6 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
-
-
-# ── Bland AI (blocking — called via asyncio.to_thread) ───────────────────────
-
-
-def _trigger_bland_call(request: CallerRequest) -> dict:
-    if not BLAND_API_KEY:
-        return {"status": "error", "message": "BLAND_API_KEY not configured"}
-
-    url = "https://api.bland.ai/v1/calls"
-    # Bland AI requires lowercase "authorization" header without "Bearer " prefix
-    headers = {"authorization": BLAND_API_KEY, "Content-Type": "application/json"}
-    payload = {
-        "phone_number": request.phone_number,
-        "task": (
-            f"You are a polite hotel receptionist from Staykaro.\n"
-            f"Call the customer named {request.customer_name}.\n"
-            f"Tell them they have a reservation at {request.hotel_name}.\n"
-            f"Check-in: {request.check_in_date}. Check-out: {request.check_out_date}.\n"
-            "Confirm their stay or offer to have a hotel executive contact them if needed."
-        ),
-    }
-    logger.info(
-        "Bland AI request: phone=%s hotel=%s", request.phone_number, request.hotel_name
-    )
-    try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-    except requests.exceptions.Timeout:
-        logger.error("Bland AI request timed out")
-        return {"status": "error", "message": "Bland AI request timed out"}
-    except requests.exceptions.HTTPError as exc:
-        body = exc.response.text if exc.response is not None else ""
-        code = exc.response.status_code if exc.response is not None else None
-        logger.error("Bland AI HTTP %s: %s", code, body)
-        return {"status": "error", "message": f"Bland AI returned HTTP {code}", "detail": body}
-    except requests.exceptions.RequestException as exc:
-        logger.error("Bland AI request failed: %s", exc)
-        return {"status": "error", "message": str(exc)}
-    except ValueError:
-        return {"status": "error", "message": "Invalid JSON response from Bland AI"}
-
-    call_id = data.get("call_id")
-    logger.info("Bland AI response: call_id=%s", call_id)
-
-    if not call_id:
-        return {
-            "status": "error",
-            "message": "Bland AI did not return call_id",
-            "bland_response": data,
-        }
-
-    _save_session(
-        call_id,
-        {
-            "customer_name": request.customer_name,
-            "phone_number": request.phone_number,
-            "hotel_name": request.hotel_name,
-            "check_in_date": request.check_in_date,
-            "check_out_date": request.check_out_date,
-            "call_status": "initiated",
-        },
-    )
-    return data
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -269,7 +201,6 @@ async def login(form: OAuth2PasswordRequestForm = Depends()) -> TokenResponse:
             detail="Invalid credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    # Admin user always gets admin role; extend this if/when a real user table exists
     role = "admin" if form.username == API_USERNAME else "user"
     return TokenResponse(
         access_token=create_access_token(form.username, role=role),
@@ -297,17 +228,20 @@ async def make_call(
     await db.commit()
     await db.refresh(caller)
 
-    bland_result = await asyncio.to_thread(_trigger_bland_call, request)
-
-    call_id = bland_result.get("call_id")
-    is_error = bland_result.get("status") == "error"
-    call_status = "failed" if is_error else "pending"
-    session = _get_session(call_id) if call_id else None
+    session_id = str(uuid.uuid4())
+    _save_session(
+        session_id,
+        {
+            "customer_name": request.customer_name,
+            "phone_number": request.phone_number,
+            "hotel_name": request.hotel_name,
+            "check_in_date": request.check_in_date,
+            "check_out_date": request.check_out_date,
+        },
+    )
 
     return {
-        "status": call_status,
-        "db_record_id": caller.id,
-        "call_id": call_id,
-        "bland": bland_result,
-        "session": session,
+        "status": "success",
+        "database": "Saved",
+        "redis_session": session_id if _redis else None,
     }

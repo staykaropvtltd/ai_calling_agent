@@ -65,7 +65,6 @@ jobs:
     env:
       REDIS_URL: redis://localhost:6379/0
       DATABASE_URL: postgresql+psycopg://ci:ci@localhost:5432/ci
-      BLAND_API_KEY: ci_dummy_key
 
     steps:
       - name: Checkout code
