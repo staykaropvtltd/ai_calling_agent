@@ -1,4 +1,5 @@
 import json
+
 import redis
 
 from app.config.settings import REDIS_URL

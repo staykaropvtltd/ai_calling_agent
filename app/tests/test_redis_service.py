@@ -4,8 +4,8 @@ from unittest.mock import patch
 import redis
 
 from app.services.redis_service import (
-    save_call_session,
     get_call_session,
+    save_call_session,
     update_call_session,
 )
 
@@ -48,18 +48,12 @@ def test_update_call_session():
         "status": "initiated"
     }
 
-    with patch(
-        "app.services.redis_service.get_call_session",
-        return_value=session
+    with (
+        patch("app.services.redis_service.get_call_session", return_value=session),
+        patch("app.services.redis_service.redis_client.set") as mock_set,
     ):
-
-        with patch(
-            "app.services.redis_service.redis_client.set"
-        ) as mock_set:
-
-            update_call_session("123", "completed")
-
-            mock_set.assert_called_once()
+        update_call_session("123", "completed")
+        mock_set.assert_called_once()
 
 
 def test_missing_call_session():

@@ -1,0 +1,27 @@
+# Ruff — Python linter configuration
+# https://docs.astral.sh/ruff/configuration/
+
+target-version = "py312"
+line-length = 100
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (unused imports, undefined names)
+    "I",    # isort (import ordering)
+    "UP",   # pyupgrade (modernise syntax)
+    "B",    # flake8-bugbear (likely bugs / design issues)
+    "C4",   # flake8-comprehensions (simplify comprehensions)
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    "E501",   # line length — handled by line-length setting
+    "T201",   # print() — acceptable during early development
+    "UP007",  # X | Y union syntax — keep backwards-compat explicit
+    "SIM108", # ternary operator — less readable in many cases
+    "B008",   # function calls in defaults — FastAPI Depends() pattern
+]
+
+[lint.isort]
+known-first-party = ["app", "src"]

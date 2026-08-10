@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.schemas.caller import CallerRequest
 from app.database.database import get_db
-
-from app.services.caller_service import save_call
+from app.schemas.caller import CallerRequest
 from app.services.bland_service import trigger_bland_call
+from app.services.caller_service import save_call
 from app.services.redis_service import get_call_session
 
 router = APIRouter()

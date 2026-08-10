@@ -1,4 +1,3 @@
-from pipecat.pipeline.pipeline import Pipeline
 
 
 async def main():
