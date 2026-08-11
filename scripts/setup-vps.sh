@@ -105,6 +105,36 @@ sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' "$SSHD_CONFIG"
 systemctl reload sshd
 ok "SSH hardened: root login and password auth disabled."
 
+# ── 9. Install certbot (NH-03 HTTPS) ─────────────────────
+log "Installing certbot for Let's Encrypt TLS certificates..."
+apt-get install -y -qq certbot
+ok "certbot installed."
+
+# Create the ACME challenge directory nginx uses during renewal.
+mkdir -p /var/www/certbot
+chown -R "$DEPLOY_USER:$DEPLOY_USER" /var/www/certbot
+
+# ── 10. TLS certificate provisioning ─────────────────────
+# Certs are NOT obtained automatically here — the domain must be
+# resolvable to this server's IP before certbot can issue them.
+# After deploy, run this once:
+#
+#   certbot certonly --webroot \
+#     -w /var/www/certbot \
+#     -d YOUR_DOMAIN \
+#     --email YOUR_EMAIL \
+#     --agree-tos \
+#     --non-interactive
+#
+# Then restart nginx:
+#   docker compose -f /opt/staykaro/docker-compose.yml \
+#                  -f /opt/staykaro/docker-compose.prod.yml \
+#                  --profile all restart nginx
+#
+# Automatic renewal (runs twice daily, renews if <30 days to expiry):
+(crontab -l 2>/dev/null; echo "0 */12 * * * certbot renew --webroot -w /var/www/certbot --quiet && docker compose -f $APP_DIR/docker-compose.yml -f $APP_DIR/docker-compose.prod.yml --profile all exec nginx nginx -s reload") | crontab -
+ok "certbot renewal cron installed."
+
 echo ""
 echo "============================================================"
 ok "VPS provisioning complete."
@@ -115,6 +145,10 @@ echo "  Next steps  :"
 echo "    1. SSH as $DEPLOY_USER: ssh $DEPLOY_USER@<server-ip>"
 echo "    2. Clone the repo:     git clone <repo-url> $APP_DIR"
 echo "    3. Create .env:        cp $APP_DIR/.env.production.example $APP_DIR/.env"
-echo "    4. Edit .env:          nano $APP_DIR/.env"
-echo "    5. Deploy:             bash $APP_DIR/scripts/deploy.sh"
+echo "    4. Edit .env:          nano $APP_DIR/.env   (set DOMAIN=your-domain.com)"
+echo "    5. Deploy HTTP first:  bash $APP_DIR/scripts/deploy.sh"
+echo "    6. Issue TLS cert:     certbot certonly --webroot -w /var/www/certbot \\"
+echo "                             -d \$DOMAIN --email you@example.com \\"
+echo "                             --agree-tos --non-interactive"
+echo "    7. Re-deploy HTTPS:    bash $APP_DIR/scripts/deploy.sh"
 echo "============================================================"

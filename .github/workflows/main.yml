@@ -53,9 +53,10 @@ jobs:
 
   # ──────────────────────────────────────────────────────────────────────────
   # Job 2 — Unit Tests
-  # Runs after lint passes. All dependencies are mocked — no real Redis or
-  # PostgreSQL is spun up. REDIS_URL / DATABASE_URL must be set so
-  # module-level client objects can be constructed at import time.
+  # Runs after lint passes.
+  # - app/tests/ — mocked Redis/DB tests for legacy app/ code
+  # - services/api/tests/ — FastAPI TestClient tests using in-memory SQLite
+  #   (no real DB or Redis needed; conftest.py overrides all env and get_db)
   # ──────────────────────────────────────────────────────────────────────────
   test:
     name: "Unit Tests (pytest)"
@@ -63,6 +64,7 @@ jobs:
     needs: [lint]
 
     env:
+      # app/tests mocks these but module-level clients need a parseable URL.
       REDIS_URL: redis://localhost:6379/0
       DATABASE_URL: postgresql+psycopg://ci:ci@localhost:5432/ci
 
@@ -77,13 +79,18 @@ jobs:
           cache: pip          # caches pip packages across runs
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest pytest-cov
+        run: |
+          pip install -r requirements.txt \
+                      -r services/api/requirements.txt \
+                      -r services/api/requirements-test.txt \
+                      pytest pytest-cov
 
       - name: Run tests with coverage
         run: |
-          pytest app/tests/ \
+          pytest app/tests/ services/api/tests/ \
             --tb=short \
             --cov=app \
+            --cov=src \
             --cov-report=term-missing \
             --cov-fail-under=60
 
@@ -106,16 +113,39 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Validate nginx config before wasting time on image builds.
+      # Validate nginx dev config (nginx.conf).
       # nginx -t resolves upstream hostnames at config-test time, but in CI
       # there is no Compose network — "api" is unresolvable. Substitute with
       # 127.0.0.1 for syntax validation only; production behaviour is unchanged.
-      - name: Validate nginx.conf syntax
+      - name: Validate nginx.conf (dev) syntax
         run: |
           sed 's|http://api:8000|http://127.0.0.1:8000|g' \
             infrastructure/nginx/nginx.conf > /tmp/nginx-ci.conf
           docker run --rm \
             -v /tmp/nginx-ci.conf:/etc/nginx/nginx.conf:ro \
+            nginx:alpine nginx -t
+
+      # Validate nginx prod config (nginx.prod.conf — NH-03 HTTPS+WSS).
+      # Requires a self-signed cert to satisfy ssl_certificate directives during
+      # syntax check. Cert is generated in /tmp/ssl/ and never persisted.
+      - name: Validate nginx.prod.conf (HTTPS+WSS) syntax
+        run: |
+          mkdir -p /tmp/ssl /tmp/nginx-prod
+          # Self-signed cert for CI config-test only — never used in production.
+          openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+            -keyout /tmp/ssl/privkey.pem \
+            -out    /tmp/ssl/fullchain.pem \
+            -subj   "/CN=ci-test" 2>/dev/null
+
+          # Substitute upstream names (unresolvable in CI) with loopback.
+          sed \
+            -e 's|http://api:8000|http://127.0.0.1:8000|g' \
+            -e 's|http://voice-gateway:9000|http://127.0.0.1:9000|g' \
+            infrastructure/nginx/nginx.prod.conf > /tmp/nginx-prod/nginx.conf
+
+          docker run --rm \
+            -v /tmp/nginx-prod/nginx.conf:/etc/nginx/nginx.conf:ro \
+            -v /tmp/ssl:/etc/nginx/ssl:ro \
             nginx:alpine nginx -t
 
       - name: "Build — api"

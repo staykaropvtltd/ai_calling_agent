@@ -22,7 +22,7 @@ from src.config import (
     validate_startup_config,
 )
 from src.database import Base, engine, get_db
-from src.models import Caller
+from src.models import Caller, Client, User  # noqa: F401 — registers all models with Base
 from src.routers.admin import router as admin_router
 
 logging.basicConfig(
@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        logger.info("Database schema ready (call_requests + clients tables)")
+        logger.info("Database schema ready (call_requests, clients, admin_users)")
     except Exception as exc:
         logger.error("DB init failed at startup — continuing: %s", exc)
     yield
@@ -201,7 +201,7 @@ async def login(form: OAuth2PasswordRequestForm = Depends()) -> TokenResponse:
             detail="Invalid credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    role = "admin" if form.username == API_USERNAME else "user"
+    role = "super_admin" if form.username == API_USERNAME else "user"
     return TokenResponse(
         access_token=create_access_token(form.username, role=role),
         expires_in=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,

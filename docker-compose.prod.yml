@@ -5,14 +5,31 @@
 # This file only overrides what differs in production.
 # The base docker-compose.yml remains the source of truth
 # for service definitions, healthchecks, and volumes.
+#
+# Prerequisites before first run:
+#   1. Set DOMAIN in /opt/staykaro/.env
+#   2. Run scripts/setup-vps.sh to provision certbot certs
+#   3. Ensure /etc/letsencrypt/live/${DOMAIN}/ exists with
+#      fullchain.pem and privkey.pem
 # ============================================================
 
 services:
 
-  # Expose nginx publicly (base binds to 127.0.0.1 for dev safety).
+  # NH-03: Expose nginx publicly (base binds to 127.0.0.1 for dev safety).
+  # Use nginx.prod.conf which adds HTTPS + WSS + HTTP→HTTPS redirect.
+  # Certs are mounted read-only from the certbot-provisioned path.
   nginx:
     ports:
       - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+    volumes:
+      # Override the embedded dev config with the prod config at runtime.
+      - ./infrastructure/nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      # Let's Encrypt certs — provisioned by scripts/setup-vps.sh (certbot).
+      # DOMAIN env var must be set in .env before running this stack.
+      - /etc/letsencrypt/live/${DOMAIN}:/etc/nginx/ssl:ro
+      # ACME challenge directory for certbot renewals (HTTP-01 challenge).
+      - /var/www/certbot:/var/www/certbot:ro
     logging:
       driver: "json-file"
       options:

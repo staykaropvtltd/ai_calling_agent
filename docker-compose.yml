@@ -162,6 +162,9 @@ services:
   # ==========================================
   # Nginx — Reverse Proxy
   # NH-03: API only
+  # Host port bindings are declared per-environment:
+  #   dev  → docker-compose.override.yml (127.0.0.1:80)
+  #   prod → docker-compose.prod.yml     (0.0.0.0:80 + 0.0.0.0:443)
   # ==========================================
   nginx:
     build:
@@ -170,9 +173,6 @@ services:
 
     container_name: staykaro-nginx
     restart: unless-stopped
-
-    ports:
-      - "127.0.0.1:80:80"
 
     depends_on:
       api:

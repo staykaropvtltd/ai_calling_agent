@@ -1,19 +1,66 @@
-from sqlalchemy import Column, Integer, String
+import uuid as _uuid
+
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy.orm import relationship
 
 from src.database import Base
 
 
 class Client(Base):
+    """
+    Represents a tenant/client organisation using the Staykaro platform.
+    Maps to /admin/clients endpoints (NH-06).
+    New columns (slug, plan, status, max_concurrent_calls, created_at, updated_at)
+    are added with server-side defaults so existing rows in a live database
+    remain valid after a schema refresh via create_all on a fresh deployment.
+    """
+
     __tablename__ = "clients"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
-    contact_email = Column(String(255))
-    contact_phone = Column(String(50))
-    api_limit = Column(Integer, default=100)
+    # slug: URL-safe unique identifier for the tenant. Nullable in DB so that
+    # rows created before this column was added don't violate NOT NULL.
+    slug = Column(String(100), unique=True, nullable=True, index=True)
+    plan = Column(String(50), server_default="starter")           # starter | pro | enterprise
+    status = Column(String(20), server_default="active")          # active | suspended | inactive
+    contact_email = Column(String(255), nullable=True)
+    contact_phone = Column(String(50), nullable=True)
+    api_limit = Column(Integer, server_default="100")
+    max_concurrent_calls = Column(Integer, server_default="10")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    users = relationship("User", back_populates="client")
+    callers = relationship("Caller", back_populates="client")
+
+
+class User(Base):
+    """
+    Admin/operator users managed through /admin/users (NH-06).
+    Separate from the JWT credential used to call the API.
+    """
+
+    __tablename__ = "admin_users"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    full_name = Column(String(255), nullable=False)
+    role = Column(String(50), server_default="agent")             # super_admin | tenant_admin | agent
+    tenant_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+    status = Column(String(20), server_default="active")          # active | suspended
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    client = relationship("Client", back_populates="users")
 
 
 class Caller(Base):
+    """
+    Inbound call requests persisted by the /call endpoint.
+    client_id links a call to a Client for per-tenant stats (NH-06 stats endpoint).
+    Nullable so calls created before this column existed remain valid.
+    """
+
     __tablename__ = "call_requests"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -22,3 +69,7 @@ class Caller(Base):
     hotel_name = Column(String)
     check_in_date = Column(String)
     check_out_date = Column(String)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    client = relationship("Client", back_populates="callers")
