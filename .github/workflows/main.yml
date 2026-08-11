@@ -67,6 +67,14 @@ jobs:
       # app/tests mocks these but module-level clients need a parseable URL.
       REDIS_URL: redis://localhost:6379/0
       DATABASE_URL: postgresql+psycopg://ci:ci@localhost:5432/ci
+      # src/config.py reads SUPABASE_DB_URL before DATABASE_URL. Without this,
+      # conftest.py's os.environ["DATABASE_URL"]="sqlite+aiosqlite:///:memory:"
+      # reaches src/database.py's module-level create_async_engine before any
+      # test fixture runs, causing a TypeError (pool_size/max_overflow are not
+      # valid for SQLite). This dummy URL gives the module-level engine a valid
+      # PostgreSQL URL so pool args are accepted; no connection is ever made
+      # because all tests use the get_db dependency override (in-memory SQLite).
+      SUPABASE_DB_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
 
     steps:
       - name: Checkout code
