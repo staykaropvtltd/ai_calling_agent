@@ -62,8 +62,8 @@ async def voice_websocket(websocket: WebSocket, call_id: str) -> None:
 
         if session is not None:
             session_manager.end(call_id)
+            session_manager.remove(call_id)
 
-        session_manager.remove(call_id)
         await transport.cleanup()
 
 
