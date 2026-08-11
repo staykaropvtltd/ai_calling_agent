@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from fastapi import FastAPI, WebSocket
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
     FastAPIWebsocketTransport,
 )
+from pipecat.workers.runner import WorkerRunner
 
 from call_session import CallSessionManager
 
@@ -47,16 +47,17 @@ async def voice_websocket(websocket: WebSocket, call_id: str) -> None:
         ]
     )
 
-    task = PipelineTask(
+    worker = PipelineWorker(
         pipeline,
         params=PipelineParams(),
         conversation_id=call_id,
     )
 
-    runner = PipelineRunner(handle_sigint=False)
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
 
     try:
-        await runner.run(task)
+        await runner.run()
     finally:
         session = session_manager.get(call_id)
 
