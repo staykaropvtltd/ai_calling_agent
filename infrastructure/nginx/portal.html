@@ -141,6 +141,11 @@
 
     <form id="callForm">
       <div class="field">
+        <label>Admin Password</label>
+        <input type="password" id="admin_password" placeholder="Enter API password" required autocomplete="current-password" />
+      </div>
+
+      <div class="field">
         <label>Customer Name</label>
         <input type="text" id="customer_name" placeholder="e.g. Raj Kumar" required />
       </div>
@@ -179,12 +184,13 @@
     const API = '/api';
 
     async function getToken() {
-      const res = await fetch(`${API}/auth/token`, {
+      const password = document.getElementById('admin_password').value;
+      const res = await fetch(`${API}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'username=admin&password=calling_agent_2026',
+        body: `username=admin&password=${encodeURIComponent(password)}`,
       });
-      if (!res.ok) throw new Error('Authentication failed');
+      if (!res.ok) throw new Error('Authentication failed — check your admin password');
       const data = await res.json();
       return data.access_token;
     }

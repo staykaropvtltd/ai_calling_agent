@@ -188,7 +188,7 @@ async def keepalive(db: AsyncSession = Depends(get_db)) -> dict:
 # Auth ─────────────────────────────────────────────────────────────────────────
 
 
-@app.post("/auth/token", response_model=TokenResponse, tags=["auth"])
+@app.post("/auth/login", response_model=TokenResponse, tags=["auth"])
 async def login(form: OAuth2PasswordRequestForm = Depends()) -> TokenResponse:
     if not API_USERNAME or not API_PASSWORD:
         raise HTTPException(

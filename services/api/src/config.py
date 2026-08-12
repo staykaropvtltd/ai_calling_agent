@@ -64,4 +64,4 @@ def validate_startup_config() -> None:
     if not REDIS_URL:
         logger.warning("REDIS_URL not set — call sessions will not be persisted")
     if not API_PASSWORD:
-        logger.warning("API_SECRET_KEY not set — /auth/token will be non-functional")
+        logger.warning("API_SECRET_KEY not set — /auth/login will be non-functional")

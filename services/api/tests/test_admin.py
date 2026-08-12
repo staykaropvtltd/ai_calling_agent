@@ -1,16 +1,23 @@
 """
 NH-06 — Admin API tests.
 Covers: RBAC, client CRUD + soft-delete + pagination + stats,
-        user CRUD + soft-delete + pagination, call log read-only.
+        user CRUD + soft-delete + pagination, call log read-only,
+        auth endpoint, invalid JWT, tenant isolation.
 """
+
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
+from jose import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Caller, Client, User
 
 pytestmark = pytest.mark.asyncio
+
+_JWT_SECRET = "test-secret-key-not-for-production-only"
+_JWT_ALG = "HS256"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,6 +78,82 @@ async def test_admin_allows_super_admin_role(
 ):
     r = await api_client.get("/admin/clients", headers=super_admin_headers)
     assert r.status_code == 200
+
+
+async def test_invalid_token_returns_401(api_client: AsyncClient):
+    """A malformed JWT must be rejected with 401."""
+    r = await api_client.get(
+        "/admin/clients",
+        headers={"Authorization": "Bearer not.a.valid.jwt"},
+    )
+    assert r.status_code == 401
+
+
+async def test_expired_token_returns_401(api_client: AsyncClient):
+    """An expired JWT must be rejected with 401."""
+    expired = jwt.encode(
+        {"sub": "test", "role": "super_admin", "exp": datetime.now(UTC) - timedelta(minutes=1)},
+        _JWT_SECRET,
+        _JWT_ALG,
+    )
+    r = await api_client.get(
+        "/admin/clients",
+        headers={"Authorization": f"Bearer {expired}"},
+    )
+    assert r.status_code == 401
+
+
+async def test_tenant_admin_role_is_rejected_on_all_admin_routes(api_client: AsyncClient):
+    """JWT with role=tenant_admin (not super_admin) must receive 403 on every admin route."""
+    token = jwt.encode(
+        {"sub": "ta@example.com", "role": "tenant_admin", "exp": datetime.now(UTC) + timedelta(minutes=30)},
+        _JWT_SECRET,
+        _JWT_ALG,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    for method, path in [
+        ("GET", "/admin/clients"),
+        ("GET", "/admin/users"),
+        ("GET", "/admin/calls"),
+    ]:
+        r = await api_client.request(method, path, headers=headers)
+        assert r.status_code == 403, f"{method} {path} returned {r.status_code}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auth endpoint (/auth/login)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_auth_login_success(api_client: AsyncClient):
+    """POST /auth/login with correct credentials returns a bearer token."""
+    r = await api_client.post(
+        "/auth/login",
+        data={"username": "admin", "password": "test-admin-password"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert "access_token" in body
+    assert body["token_type"] == "bearer"
+    assert body["expires_in"] > 0
+
+
+async def test_auth_login_wrong_password_401(api_client: AsyncClient):
+    """POST /auth/login with wrong password returns 401."""
+    r = await api_client.post(
+        "/auth/login",
+        data={"username": "admin", "password": "wrong-password"},
+    )
+    assert r.status_code == 401
+
+
+async def test_auth_token_endpoint_removed(api_client: AsyncClient):
+    """The old /auth/token endpoint must no longer exist (404 or 405)."""
+    r = await api_client.post(
+        "/auth/token",
+        data={"username": "admin", "password": "test-admin-password"},
+    )
+    assert r.status_code in (404, 405)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -208,6 +291,21 @@ async def test_update_client_not_found_404(api_client: AsyncClient, super_admin_
     assert r.status_code == 404
 
 
+async def test_update_client_conflicting_slug_409(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    """Updating a client's slug to one already taken by another client must return 409."""
+    c1 = await _create_client(db_session, name="Client One", slug="slug-one")
+    c2 = await _create_client(db_session, name="Client Two", slug="slug-two")
+    r = await api_client.put(
+        f"/admin/clients/{c2.id}",
+        json={"slug": c1.slug},
+        headers=super_admin_headers,
+    )
+    assert r.status_code == 409
+    assert "Slug already exists" in r.json()["detail"]
+
+
 async def test_delete_client_is_soft_not_hard(
     api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
 ):
@@ -322,6 +420,19 @@ async def test_create_user_missing_required_fields_422(
 ):
     r = await api_client.post("/admin/users", json={"email": "x@x.com"}, headers=super_admin_headers)
     assert r.status_code == 422
+
+
+async def test_create_user_invalid_tenant_id_404(
+    api_client: AsyncClient, super_admin_headers: dict
+):
+    """Creating a user that references a non-existent client must return 404."""
+    r = await api_client.post(
+        "/admin/users",
+        json={"email": "ghost@x.com", "full_name": "Ghost", "role": "agent", "tenant_id": 99999},
+        headers=super_admin_headers,
+    )
+    assert r.status_code == 404
+    assert "Tenant not found" in r.json()["detail"]
 
 
 async def test_list_users_pagination(
@@ -479,3 +590,61 @@ async def test_user_cannot_access_any_admin_endpoints(
     for method, path in endpoints:
         r = await api_client.request(method, path, headers=user_headers)
         assert r.status_code == 403, f"{method} {path} returned {r.status_code}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tenant / client isolation
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_cross_tenant_user_isolation(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    """Users belonging to tenant A must NOT appear when listing tenant B's users."""
+    c1 = await _create_client(db_session, name="Tenant A", slug="tenant-a")
+    c2 = await _create_client(db_session, name="Tenant B", slug="tenant-b")
+    await _create_user(db_session, email="user-a@example.com", tenant_id=c1.id)
+    await _create_user(db_session, email="user-b@example.com", tenant_id=c2.id)
+
+    r = await api_client.get(f"/admin/users?tenant_id={c1.id}", headers=super_admin_headers)
+    assert r.status_code == 200
+    emails = [u["email"] for u in r.json()["data"]]
+    assert "user-a@example.com" in emails
+    assert "user-b@example.com" not in emails
+
+
+async def test_cross_tenant_call_isolation(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    """Calls belonging to tenant A must NOT appear when filtering by tenant B."""
+    c1 = await _create_client(db_session, name="Hotel A", slug="hotel-a")
+    c2 = await _create_client(db_session, name="Hotel B", slug="hotel-b")
+    await _create_call(db_session, client_id=c1.id)
+    await _create_call(db_session, client_id=c2.id)
+
+    r = await api_client.get(f"/admin/calls?tenant_id={c2.id}", headers=super_admin_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1
+    assert body["data"][0]["client_id"] == c2.id
+
+
+async def test_cross_tenant_client_not_visible_to_non_super_admin(
+    api_client: AsyncClient, db_session: AsyncSession
+):
+    """A JWT with role=tenant_admin must not be able to enumerate other clients."""
+    await _create_client(db_session, name="Secret Client", slug="secret")
+    token = jwt.encode(
+        {
+            "sub": "agent@tenant.com",
+            "role": "tenant_admin",
+            "exp": datetime.now(UTC) + timedelta(minutes=30),
+        },
+        _JWT_SECRET,
+        _JWT_ALG,
+    )
+    r = await api_client.get(
+        "/admin/clients",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403

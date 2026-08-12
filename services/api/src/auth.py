@@ -10,13 +10,16 @@ from src.config import JWT_ACCESS_TOKEN_EXPIRE_MINUTES, JWT_ALGORITHM, JWT_SECRE
 _bearer = HTTPBearer(auto_error=False)
 
 
-def create_access_token(subject: str, role: str = "user") -> str:
+def create_access_token(
+    subject: str,
+    role: str = "user",
+    client_id: Optional[int] = None,
+) -> str:
     expire = datetime.now(UTC) + timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
-    return jwt.encode(
-        {"sub": subject, "role": role, "exp": expire},
-        JWT_SECRET_KEY,
-        algorithm=JWT_ALGORITHM,
-    )
+    payload: dict = {"sub": subject, "role": role, "exp": expire}
+    if client_id is not None:
+        payload["client_id"] = client_id
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
 def get_current_user(

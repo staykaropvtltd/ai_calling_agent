@@ -5,9 +5,15 @@
 # ============================================================
 
 $API_BASE   = "http://localhost"
-$USERNAME   = "admin"
-$PASSWORD   = "calling_agent_2026"
+$USERNAME   = $env:API_USERNAME
+$PASSWORD   = $env:API_PASSWORD
 $MAX_RETRY  = 3
+
+if (-not $USERNAME) { $USERNAME = "admin" }
+if (-not $PASSWORD) {
+    Write-Error "API_PASSWORD environment variable is not set. Cannot authenticate."
+    exit 1
+}
 $LOG_FILE   = "$PSScriptRoot\keepalive.log"
 $TIMESTAMP  = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
@@ -35,7 +41,7 @@ for ($i = 1; $i -le $MAX_RETRY; $i++) {
     try {
         $resp = Invoke-RestMethod `
             -Method POST `
-            -Uri "$API_BASE/api/auth/token" `
+            -Uri "$API_BASE/api/auth/login" `
             -ContentType "application/x-www-form-urlencoded" `
             -Body "username=$USERNAME&password=$PASSWORD" `
             -TimeoutSec 10 `
