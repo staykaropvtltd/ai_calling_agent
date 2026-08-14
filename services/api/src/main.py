@@ -8,15 +8,21 @@ from typing import Optional
 
 import redis
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth import create_access_token, get_current_user
+from src.auth import (
+    _ROLE_PERMISSIONS,
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+    get_current_user,
+)
 from src.config import (
+    API_ADMIN_EMAIL,
+    API_ADMIN_FULL_NAME,
     API_PASSWORD,
-    API_USERNAME,
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
     REDIS_URL,
     validate_startup_config,
@@ -118,8 +124,27 @@ class CallerRequest(BaseModel):
         return cleaned
 
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class MeResponse(BaseModel):
+    user_id: str
+    email: str
+    full_name: str
+    role: str
+    tenant_id: Optional[int]
+    permissions: list[str]
+
+
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     expires_in: int
 
@@ -189,22 +214,66 @@ async def keepalive(db: AsyncSession = Depends(get_db)) -> dict:
 
 
 @app.post("/auth/login", response_model=TokenResponse, tags=["auth"])
-async def login(form: OAuth2PasswordRequestForm = Depends()) -> TokenResponse:
-    if not API_USERNAME or not API_PASSWORD:
+async def login(body: LoginRequest) -> TokenResponse:
+    if not API_ADMIN_EMAIL or not API_PASSWORD:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication not configured",
         )
-    if form.username != API_USERNAME or form.password != API_PASSWORD:
+    if body.email != API_ADMIN_EMAIL or body.password != API_PASSWORD:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    role = "super_admin" if form.username == API_USERNAME else "user"
     return TokenResponse(
-        access_token=create_access_token(form.username, role=role),
+        access_token=create_access_token(
+            body.email,
+            role="super_admin",
+            email=body.email,
+            full_name=API_ADMIN_FULL_NAME,
+        ),
+        refresh_token=create_refresh_token(
+            body.email,
+            role="super_admin",
+            email=body.email,
+            full_name=API_ADMIN_FULL_NAME,
+        ),
         expires_in=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+
+@app.post("/auth/refresh", response_model=TokenResponse, tags=["auth"])
+async def refresh_token(body: RefreshRequest) -> TokenResponse:
+    payload = decode_refresh_token(body.refresh_token)
+    subject = payload["sub"]
+    role = payload.get("role", "agent")
+    email = payload.get("email", "")
+    full_name = payload.get("full_name", "")
+    return TokenResponse(
+        access_token=create_access_token(subject, role=role, email=email, full_name=full_name),
+        refresh_token=create_refresh_token(subject, role=role, email=email, full_name=full_name),
+        expires_in=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+
+@app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT, tags=["auth"])
+async def logout(_user: dict = Depends(get_current_user)) -> None:
+    # Stateless logout: the client discards its tokens. Server-side token
+    # revocation (Redis denylist) is deferred to NK-05.
+    return None
+
+
+@app.get("/auth/me", response_model=MeResponse, tags=["auth"])
+async def me(user: dict = Depends(get_current_user)) -> MeResponse:
+    role = user.get("role", "agent")
+    return MeResponse(
+        user_id=user["sub"],
+        email=user.get("email", ""),
+        full_name=user.get("full_name", ""),
+        role=role,
+        tenant_id=user.get("client_id"),
+        permissions=_ROLE_PERMISSIONS.get(role, []),
     )
 
 

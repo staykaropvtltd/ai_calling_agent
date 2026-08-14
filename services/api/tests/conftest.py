@@ -13,6 +13,8 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ["API_SECRET_KEY"] = "test-admin-password"
 os.environ["API_USERNAME"] = "admin"
 os.environ["API_PASSWORD"] = "test-admin-password"
+os.environ["API_ADMIN_EMAIL"] = "admin@staykaro.com"
+os.environ["API_ADMIN_FULL_NAME"] = "Test Admin"
 
 from datetime import UTC, datetime, timedelta  # noqa: E402
 
@@ -36,7 +38,11 @@ _JWT_ALG = "HS256"
 
 def _make_token(role: str) -> str:
     expire = datetime.now(UTC) + timedelta(minutes=30)
-    return jwt.encode({"sub": "test", "role": role, "exp": expire}, _JWT_SECRET, _JWT_ALG)
+    return jwt.encode(
+        {"sub": "test", "role": role, "exp": expire, "type": "access"},
+        _JWT_SECRET,
+        _JWT_ALG,
+    )
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -83,3 +89,28 @@ def super_admin_headers() -> dict:
 @pytest.fixture
 def user_headers() -> dict:
     return {"Authorization": f"Bearer {_make_token('user')}"}
+
+
+@pytest.fixture
+def agent_headers() -> dict:
+    return {"Authorization": f"Bearer {_make_token('agent')}"}
+
+
+@pytest.fixture
+def make_tenant_admin_headers():
+    """Factory fixture: call with a client_id to get headers for that tenant's admin."""
+    def _make(client_id: int) -> dict:
+        expire = datetime.now(UTC) + timedelta(minutes=30)
+        token = jwt.encode(
+            {
+                "sub": "ta@test.com",
+                "role": "tenant_admin",
+                "client_id": client_id,
+                "exp": expire,
+                "type": "access",
+            },
+            _JWT_SECRET,
+            _JWT_ALG,
+        )
+        return {"Authorization": f"Bearer {token}"}
+    return _make

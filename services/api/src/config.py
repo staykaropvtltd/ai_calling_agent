@@ -39,13 +39,18 @@ DB_SSL_REQUIRED: bool = os.getenv("DB_SSL_REQUIRED", "true").lower() == "true"
 JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "")
 JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+JWT_REFRESH_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_MINUTES", "10080"))  # 7 days
 
 # ── Admin credentials ─────────────────────────────────────────────────────────
 # docker-compose does not forward API_USERNAME / API_PASSWORD to the container,
 # but it does forward API_SECRET_KEY. Fall back to API_SECRET_KEY so the
-# /auth/token endpoint stays functional in Docker without touching compose.
+# /auth/login endpoint stays functional in Docker without touching compose.
 API_USERNAME: str = os.getenv("API_USERNAME", "admin")
 API_PASSWORD: str = os.getenv("API_PASSWORD") or os.getenv("API_SECRET_KEY", "")
+# Email and display name embedded in JWTs issued at /auth/login.
+# Replace with DB lookup when NK-05 delivers the user table.
+API_ADMIN_EMAIL: str = os.getenv("API_ADMIN_EMAIL", "admin@staykaro.com")
+API_ADMIN_FULL_NAME: str = os.getenv("API_ADMIN_FULL_NAME", "System Admin")
 
 
 def validate_startup_config() -> None:

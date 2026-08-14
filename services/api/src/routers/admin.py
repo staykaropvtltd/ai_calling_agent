@@ -30,6 +30,19 @@ def _require_super_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+def _require_admin(user: dict = Depends(get_current_user)) -> dict:
+    """Allows super_admin (unrestricted) and tenant_admin (own-tenant only).
+    Routes using this dependency MUST scope queries by checking user['role'] and
+    using user.get('client_id') rather than the tenant_id query parameter.
+    """
+    if user.get("role") not in ("super_admin", "tenant_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="admin role required",
+        )
+    return user
+
+
 # ── Schemas — Clients ─────────────────────────────────────────────────────────
 
 VALID_PLANS = {"starter", "pro", "enterprise"}
@@ -359,11 +372,25 @@ async def list_users(
     role: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(_require_super_admin),
+    user: dict = Depends(_require_admin),
 ) -> PaginatedUsers:
     stmt = select(User)
-    if tenant_id is not None:
-        stmt = stmt.where(User.tenant_id == tenant_id)
+
+    if user.get("role") == "tenant_admin":
+        # Tenant isolation: ignore the tenant_id query param; always bind to the
+        # client_id embedded in the JWT so a caller cannot escalate to another tenant.
+        jwt_tenant_id = user.get("client_id")
+        if not jwt_tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="tenant_admin token has no tenant assigned",
+            )
+        stmt = stmt.where(User.tenant_id == jwt_tenant_id)
+    else:
+        # super_admin: apply the optional query param filter.
+        if tenant_id is not None:
+            stmt = stmt.where(User.tenant_id == tenant_id)
+
     if role:
         stmt = stmt.where(User.role == role)
     if status_filter:
@@ -385,12 +412,15 @@ async def list_users(
 async def get_user(
     user_id: str,
     db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(_require_super_admin),
+    user: dict = Depends(_require_admin),
 ) -> User:
-    user = await db.get(User, user_id)
-    if not user:
+    fetched = await db.get(User, user_id)
+    if not fetched:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return user
+    # tenant_admin may only view users belonging to their own tenant.
+    if user.get("role") == "tenant_admin" and fetched.tenant_id != user.get("client_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return fetched
 
 
 @router.put("/users/{user_id}", response_model=UserResponse)
@@ -447,11 +477,24 @@ async def list_calls(
     per_page: int = Query(20, ge=1, le=100),
     tenant_id: Optional[int] = Query(None, description="Filter by client/tenant id"),
     db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(_require_super_admin),
+    user: dict = Depends(_require_admin),
 ) -> PaginatedCalls:
     stmt = select(Caller)
-    if tenant_id is not None:
-        stmt = stmt.where(Caller.client_id == tenant_id)
+
+    if user.get("role") == "tenant_admin":
+        # Tenant isolation: ignore the tenant_id query param; always bind to the
+        # client_id in the JWT so a caller cannot escalate to another tenant.
+        jwt_tenant_id = user.get("client_id")
+        if not jwt_tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="tenant_admin token has no tenant assigned",
+            )
+        stmt = stmt.where(Caller.client_id == jwt_tenant_id)
+    else:
+        # super_admin: apply the optional query param filter.
+        if tenant_id is not None:
+            stmt = stmt.where(Caller.client_id == tenant_id)
 
     total: int = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     rows = (await db.execute(stmt.offset((page - 1) * per_page).limit(per_page))).scalars().all()
@@ -469,9 +512,12 @@ async def list_calls(
 async def get_call(
     call_id: int,
     db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(_require_super_admin),
+    user: dict = Depends(_require_admin),
 ) -> Caller:
     call = await db.get(Caller, call_id)
     if not call:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
+    # tenant_admin may only view calls belonging to their own tenant.
+    if user.get("role") == "tenant_admin" and call.client_id != user.get("client_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return call
