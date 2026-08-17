@@ -1,5 +1,4 @@
 import redis
-
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -7,7 +6,6 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.database.database import engine
 from app.services.redis_service import redis_client
-
 
 router = APIRouter(
     prefix="/api/v1",
@@ -23,15 +21,15 @@ def health():
 
 
 @router.get("/health/ready")
-def readiness():
+async def readiness():
     checks = {
         "postgresql": "ok",
         "redis": "ok"
     }
 
     try:
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
     except SQLAlchemyError:
         checks["postgresql"] = "error"
 
