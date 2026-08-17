@@ -1,7 +1,7 @@
 import pytest
+from call_session import CallSessionManager
 
 from app.services.redis_service import delete_call_session
-from call_session import CallSessionManager
 
 
 @pytest.fixture(autouse=True)

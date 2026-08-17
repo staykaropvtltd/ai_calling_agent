@@ -4,7 +4,6 @@ import redis
 
 from app.config.settings import REDIS_URL
 
-
 redis_client = redis.Redis.from_url(
     REDIS_URL,
     decode_responses=True,
@@ -48,5 +47,12 @@ def update_call_session(call_id: str, status: str):
                 ex=3600,
             )
 
+    except redis.RedisError as e:
+        print(f"Redis Error: {e}")
+
+
+def delete_call_session(call_id: str):
+    try:
+        redis_client.delete(f"call_session:{call_id}")
     except redis.RedisError as e:
         print(f"Redis Error: {e}")
