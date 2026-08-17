@@ -4,9 +4,10 @@ import redis
 
 from app.config.settings import REDIS_URL
 
+
 redis_client = redis.Redis.from_url(
     REDIS_URL,
-    decode_responses=True
+    decode_responses=True,
 )
 
 
@@ -15,7 +16,7 @@ def save_call_session(call_id: str, data: dict):
         redis_client.set(
             f"call_session:{call_id}",
             json.dumps(data),
-            ex=3600
+            ex=3600,
         )
     except redis.RedisError as e:
         print(f"Redis Error: {e}")
@@ -44,7 +45,7 @@ def update_call_session(call_id: str, status: str):
             redis_client.set(
                 f"call_session:{call_id}",
                 json.dumps(session),
-                ex=3600
+                ex=3600,
             )
 
     except redis.RedisError as e:

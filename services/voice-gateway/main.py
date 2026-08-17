@@ -1,10 +1,12 @@
 
+        if session is not None:
+            session_manager.end(call_id)
+            session_manager.remove(call_id)
 
-async def main():
-    print("StayKaro voice gateway started")
+        await transport.cleanup()
 
 
 if __name__ == "__main__":
-    import asyncio
+    import uvicorn
 
     asyncio.run(main())
