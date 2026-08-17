@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from app.auth.router import router as auth_router
 from app.database.database import Base, engine
 from app.routers.home import router as home_router
-
+from app.routers.health import router as health_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -23,6 +23,6 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
-
 app.include_router(auth_router)
 app.include_router(home_router)
+app.include_router(health_router)
