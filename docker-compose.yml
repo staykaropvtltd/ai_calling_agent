@@ -1,347 +1,228 @@
-# ============================================
-# STAYKARO AI CALLER — Docker Compose
-# Version: 1.0.2
-# Phase: NH-01 — Engineering Foundation
-# ============================================
-
 services:
-
-  # ==========================================
-  # PostgreSQL + pgvector
-  # ==========================================
   postgres:
     image: pgvector/pgvector:pg16
     container_name: staykaro-postgres
     restart: unless-stopped
-
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-staykaro}
       POSTGRES_USER: ${POSTGRES_USER:-staykaro_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
-
-    # Existing Windows PostgreSQL uses 5432.
-    # Windows: localhost:5433
-    # Docker internal: postgres:5432
     ports:
-      - "127.0.0.1:5433:5432"
-
+    - 127.0.0.1:5433:5432
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./infrastructure/docker/postgres-init:/docker-entrypoint-initdb.d:ro
-
+    - postgres_data:/var/lib/postgresql/data
+    - ./infrastructure/docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-staykaro_user} -d ${POSTGRES_DB:-staykaro}"
-        ]
+      - CMD-SHELL
+      - pg_isready -U ${POSTGRES_USER:-staykaro_user} -d ${POSTGRES_DB:-staykaro}
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-
     networks:
-      - staykaro-network
-
+    - staykaro-network
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ==========================================
-  # Redis — Live Call State & Caching
-  # ==========================================
+        max-size: 10m
+        max-file: '3'
   redis:
     image: redis:7-alpine
     container_name: staykaro-redis
     restart: unless-stopped
-
     command:
-      [
-        "redis-server",
-        "--save", "60", "1000",
-        "--appendonly", "yes",
-        "--appendfsync", "everysec",
-        "--requirepass", "${REDIS_PASSWORD}",
-        "--loglevel", "${REDIS_LOG_LEVEL:-notice}"
-      ]
-
-    # Existing Windows Redis uses 6379.
-    # Windows: localhost:6380
-    # Docker internal: redis:6379
+    - redis-server
+    - --save
+    - '60'
+    - '1000'
+    - --appendonly
+    - 'yes'
+    - --appendfsync
+    - everysec
+    - --requirepass
+    - ${REDIS_PASSWORD}
+    - --loglevel
+    - ${REDIS_LOG_LEVEL:-notice}
     ports:
-      - "127.0.0.1:6380:6379"
-
+    - 127.0.0.1:6380:6379
     volumes:
-      - redis_data:/data
-
+    - redis_data:/data
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"
-        ]
+      - CMD-SHELL
+      - redis-cli -a "$$REDIS_PASSWORD" ping | grep PONG
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-
     networks:
-      - staykaro-network
-
+    - staykaro-network
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ==========================================
-  # API Service — FastAPI
-  # Owner: Nishkala
-  # ==========================================
+        max-size: 10m
+        max-file: '3'
   api:
     build:
-      context: ./services/api
-      dockerfile: Dockerfile
-
+      context: .
+      dockerfile: services/api/Dockerfile
     container_name: staykaro-api
     restart: unless-stopped
-
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
-
       API_HOST: ${API_HOST:-0.0.0.0}
       API_PORT: ${API_PORT:-8000}
-
       API_SECRET_KEY: ${API_SECRET_KEY}
-
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
-
       ENVIRONMENT: ${ENVIRONMENT:-development}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
-
     ports:
-      - "127.0.0.1:8000:8000"
-
+    - 127.0.0.1:8000:8000
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-
     healthcheck:
       test:
-        [
-          "CMD",
-          "curl",
-          "-f",
-          "http://localhost:8000/health"
-        ]
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8000/health
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-
     networks:
-      - staykaro-network
-
+    - staykaro-network
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
-
-    profiles:
-      - all
-
-  # ==========================================
-  # Voice Gateway — Pipecat
-  # Owner: Shivashree
-  # ==========================================
+        max-size: 10m
+        max-file: '3'
   voice-gateway:
     build:
       context: ./services/voice-gateway
       dockerfile: Dockerfile
-
     container_name: staykaro-voice-gateway
     restart: unless-stopped
-
     environment:
       REDIS_URL: ${REDIS_URL}
-
       VOICE_GATEWAY_HOST: ${VOICE_GATEWAY_HOST:-0.0.0.0}
       VOICE_GATEWAY_PORT: ${VOICE_GATEWAY_PORT:-9000}
-
       DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY}
-
       GROQ_API_KEY: ${GROQ_API_KEY}
       GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
-
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
-
       TELEPHONY_PROVIDER: ${TELEPHONY_PROVIDER:-twilio}
-
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
-
       ENVIRONMENT: ${ENVIRONMENT:-development}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
-
     ports:
-      - "127.0.0.1:9000:9000"
-
+    - 127.0.0.1:9000:9000
     depends_on:
       redis:
         condition: service_healthy
-
     healthcheck:
       test:
-        [
-          "CMD",
-          "curl",
-          "-f",
-          "http://localhost:9000/health"
-        ]
+      - CMD
+      - curl
+      - -f
+      - http://localhost:9000/health
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-
     networks:
-      - staykaro-network
-
+    - staykaro-network
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
-
+        max-size: 10m
+        max-file: '3'
     profiles:
-      - all
-
-  # ==========================================
-  # Worker
-  # Owner: Nishkala
-  # ==========================================
+    - all
   worker:
     build:
       context: ./services/worker
       dockerfile: Dockerfile
-
     container_name: staykaro-worker
     restart: unless-stopped
-
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
-
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
-
       ENVIRONMENT: ${ENVIRONMENT:-development}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
-
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-
     networks:
-      - staykaro-network
-
+    - staykaro-network
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
-
+        max-size: 10m
+        max-file: '3'
     profiles:
-      - all
-
-  # ==========================================
-  # Integration Service
-  # Owner: Nihal
-  # ==========================================
+    - all
   integration-service:
     build:
       context: ./services/integration-service
       dockerfile: Dockerfile
-
     container_name: staykaro-integration-service
     restart: unless-stopped
-
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
-
       INTEGRATION_SERVICE_PORT: ${INTEGRATION_SERVICE_PORT:-8002}
-
       ENVIRONMENT: ${ENVIRONMENT:-development}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
-
     ports:
-      - "127.0.0.1:8002:8002"
-
+    - 127.0.0.1:8002:8002
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-
     healthcheck:
       test:
-        [
-          "CMD",
-          "curl",
-          "-f",
-          "http://localhost:8002/health"
-        ]
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8002/health
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-
     networks:
-      - staykaro-network
-
+    - staykaro-network
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
-
+        max-size: 10m
+        max-file: '3'
     profiles:
-      - all
-
-
-# ==========================================
-# Persistent Volumes
-# ==========================================
+    - all
 volumes:
-
   postgres_data:
     name: staykaro_postgres_data
     driver: local
-
   redis_data:
     name: staykaro_redis_data
     driver: local
-
-
-# ==========================================
-# Internal Docker Network
-# ==========================================
 networks:
-
   staykaro-network:
     name: staykaro-network
     driver: bridge

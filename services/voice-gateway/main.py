@@ -10,11 +10,28 @@ from pipecat.transports.websocket.fastapi import (
 from pipecat.workers.runner import WorkerRunner
 
 from call_session import CallSessionManager
+from exotel_routes import build_exotel_router
+from internal_calls import InternalCallsClient
+from exotel_stream import build_exotel_stream_router
+from pipeline_handle import CallPipelineHandle
+from packages.providers.telephony import ExotelSettings, ProviderError
 
 
 app = FastAPI(title="StayKaro Voice Gateway")
 
 session_manager = CallSessionManager()
+
+try:
+    import os
+    routing = None
+    if os.getenv("EXOTEL_ROUTING_STUB_ENABLED", "false").lower() == "true" and os.getenv("ENVIRONMENT", "development").lower() in ("local", "development", "test"):
+        from dev_routing import TestExotelRoutingStub
+        routing = TestExotelRoutingStub()
+    app.include_router(build_exotel_router(session_manager, ExotelSettings.from_environment(), InternalCallsClient(os.getenv("INTERNAL_API_BASE_URL", "http://api:8000")), routing))
+    app.include_router(build_exotel_stream_router(session_manager, InternalCallsClient(os.getenv("INTERNAL_API_BASE_URL", "http://api:8000")), routing))
+except ProviderError:
+    # Exotel is optional for local SH-03-only startup; sandbox deployments must configure it.
+    pass
 
 
 @app.get("/health")
@@ -32,32 +49,12 @@ async def voice_websocket(websocket: WebSocket, call_id: str) -> None:
         agent_id="unknown",
     )
 
-    transport = FastAPIWebsocketTransport(
-        websocket,
-        FastAPIWebsocketParams(
-            audio_in_enabled=False,
-            audio_out_enabled=False,
-        ),
-    )
-
-    pipeline = Pipeline(
-        [
-            transport.input(),
-            transport.output(),
-        ]
-    )
-
-    worker = PipelineWorker(
-        pipeline,
-        params=PipelineParams(),
-        conversation_id=call_id,
-    )
-
-    runner = WorkerRunner(handle_sigint=False)
-    await runner.add_workers(worker)
+    handle = CallPipelineHandle(websocket, call_id)
+    await handle.start()
 
     try:
-        await runner.run()
+        if handle._task:
+            await handle._task
     finally:
         session = session_manager.get(call_id)
 
@@ -65,7 +62,7 @@ async def voice_websocket(websocket: WebSocket, call_id: str) -> None:
             session_manager.end(call_id)
             session_manager.remove(call_id)
 
-        await transport.cleanup()
+        await handle.cleanup()
 
 
 if __name__ == "__main__":

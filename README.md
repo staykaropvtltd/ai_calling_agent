@@ -185,20 +185,7 @@ See `.env.example` for the full list of required variables.
 | Backend & Data | Nishkala | FastAPI, PostgreSQL, Redis, RAG |
 | Frontend & DevOps | Nihal | Docker, Nginx, CI/CD, Dashboards |
 
-## Phase 0 — Engineering Foundation
 
-| Ticket | Owner | Description | Status |
-|--------|-------|-------------|--------|
-| NH-01 | Nihal | Docker Compose skeleton | ✅ Complete |
-| NH-02 | Nihal | Dockerfiles per service | ⏳ Pending |
-| NH-03 | Nihal | Nginx reverse proxy | ⏳ Pending |
-| NH-04 | Nihal | GitHub Actions CI/CD | ⏳ Pending |
-| NH-05 | Nihal | VPS deployment foundation | ⏳ Pending |
-| NK-01 | Nishkala | FastAPI skeleton/config | ⏳ Pending |
-| NK-02 | Nishkala | PostgreSQL schema/migrations | ⏳ Pending |
-| NK-03 | Nishkala | Redis call sessions | ⏳ Pending |
-| NK-04 | Nishkala | Health/readiness endpoints | ⏳ Pending |
-| SH-03 | Shivashree | Voice Gateway/Pipecat | ⏳ Pending |
 
 ## Security
 
