@@ -51,3 +51,26 @@ class ExotelSettings:
         if missing:
             raise ProviderError("Missing required Exotel configuration: " + ", ".join(missing))
         return cls(**values, timeout_seconds=float(os.getenv("EXOTEL_TIMEOUT_SECONDS", "10")))
+
+
+@dataclass(frozen=True)
+class TwilioSettings:
+    """Configuration for the Twilio telephony provider."""
+
+    account_sid: str
+    auth_token: str
+    phone_number: str
+    timeout_seconds: float = 10.0
+
+    @classmethod
+    def from_environment(cls) -> "TwilioSettings":
+        names = {
+            "account_sid": "TWILIO_ACCOUNT_SID",
+            "auth_token": "TWILIO_AUTH_TOKEN",
+            "phone_number": "TWILIO_PHONE_NUMBER",
+        }
+        values = {field: os.getenv(name, "").strip() for field, name in names.items()}
+        missing = [name for field, name in names.items() if not values[field]]
+        if missing:
+            raise ProviderError("Missing required Twilio configuration: " + ", ".join(missing))
+        return cls(**values, timeout_seconds=float(os.getenv("TWILIO_TIMEOUT_SECONDS", "10")))

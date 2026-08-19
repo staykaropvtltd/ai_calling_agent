@@ -9,6 +9,7 @@ from exotel_routes import PhoneRouting
 from datetime import datetime, timezone
 from uuid import uuid4
 from pipeline_handle import CallPipelineHandle
+from transcript_handler import make_transcript_handler
 
 def decode_media(payload: str) -> InputAudioRawFrame:
     try: audio = base64.b64decode(payload, validate=True)
@@ -24,7 +25,7 @@ def encode_media(stream_sid: str, frame: OutputAudioRawFrame) -> dict:
 class StreamState:
     call_id: str | None = None; stream_sid: str | None = None; stopped: bool = False
 
-def build_exotel_stream_router(session_manager: object, calls: InternalCalls, routing: PhoneRouting | None) -> APIRouter:
+def build_exotel_stream_router(session_manager: object, calls: InternalCalls, routing: PhoneRouting | None, stt_provider=None) -> APIRouter:
     router=APIRouter()
     @router.websocket('/telephony/exotel/stream')
     async def stream(ws: WebSocket):
@@ -47,7 +48,8 @@ def build_exotel_stream_router(session_manager: object, calls: InternalCalls, ro
                     session_manager.create(state.call_id,tenant,agent)
                     async def outbound(frame):
                         if state.stream_sid: await ws.send_json(encode_media(state.stream_sid, frame))
-                    handle=CallPipelineHandle(ws, state.call_id, outbound, externally_fed=True); await handle.start()
+                    on_transcript = make_transcript_handler(state.call_id)
+                    handle=CallPipelineHandle(ws, state.call_id, outbound, externally_fed=True, stt_provider=stt_provider, on_transcript=on_transcript); await handle.start()
                 elif kind=='media':
                     if handle is None: continue
                     await handle.input.push_audio_frame(decode_media((event.get('media') or {}).get('payload','')))
