@@ -24,6 +24,7 @@ _JWT_ALG = "HS256"
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 async def _create_client(db: AsyncSession, *, name="ACME", slug="acme") -> Client:
     client = Client(name=name, slug=slug, plan="starter", status="active")
     db.add(client)
@@ -32,7 +33,9 @@ async def _create_client(db: AsyncSession, *, name="ACME", slug="acme") -> Clien
     return client
 
 
-async def _create_user(db: AsyncSession, *, email="u@example.com", role="agent", tenant_id=None) -> User:
+async def _create_user(
+    db: AsyncSession, *, email="u@example.com", role="agent", tenant_id=None
+) -> User:
     user = User(email=email, full_name="Test User", role=role, tenant_id=tenant_id)
     db.add(user)
     await db.commit()
@@ -65,17 +68,13 @@ async def test_admin_requires_bearer_token(api_client: AsyncClient):
     assert r.status_code == 401
 
 
-async def test_admin_rejects_non_super_admin_role(
-    api_client: AsyncClient, user_headers: dict
-):
+async def test_admin_rejects_non_super_admin_role(api_client: AsyncClient, user_headers: dict):
     r = await api_client.get("/admin/clients", headers=user_headers)
     assert r.status_code == 403
     assert "super_admin" in r.json()["detail"]
 
 
-async def test_admin_allows_super_admin_role(
-    api_client: AsyncClient, super_admin_headers: dict
-):
+async def test_admin_allows_super_admin_role(api_client: AsyncClient, super_admin_headers: dict):
     r = await api_client.get("/admin/clients", headers=super_admin_headers)
     assert r.status_code == 200
 
@@ -92,7 +91,12 @@ async def test_invalid_token_returns_401(api_client: AsyncClient):
 async def test_expired_token_returns_401(api_client: AsyncClient):
     """An expired JWT must be rejected with 401."""
     expired = jwt.encode(
-        {"sub": "test", "role": "super_admin", "exp": datetime.now(UTC) - timedelta(minutes=1), "type": "access"},
+        {
+            "sub": "test",
+            "role": "super_admin",
+            "exp": datetime.now(UTC) - timedelta(minutes=1),
+            "type": "access",
+        },
         _JWT_SECRET,
         _JWT_ALG,
     )
@@ -106,7 +110,12 @@ async def test_expired_token_returns_401(api_client: AsyncClient):
 async def test_tenant_admin_role_is_rejected_on_all_admin_routes(api_client: AsyncClient):
     """JWT with role=tenant_admin (not super_admin) must receive 403 on every admin route."""
     token = jwt.encode(
-        {"sub": "ta@example.com", "role": "tenant_admin", "exp": datetime.now(UTC) + timedelta(minutes=30), "type": "access"},
+        {
+            "sub": "ta@example.com",
+            "role": "tenant_admin",
+            "exp": datetime.now(UTC) + timedelta(minutes=30),
+            "type": "access",
+        },
         _JWT_SECRET,
         _JWT_ALG,
     )
@@ -306,7 +315,9 @@ async def test_create_client_invalid_plan_400(api_client: AsyncClient, super_adm
 async def test_create_client_missing_required_fields_422(
     api_client: AsyncClient, super_admin_headers: dict
 ):
-    r = await api_client.post("/admin/clients", json={"name": "No Slug"}, headers=super_admin_headers)
+    r = await api_client.post(
+        "/admin/clients", json={"name": "No Slug"}, headers=super_admin_headers
+    )
     assert r.status_code == 422
 
 
@@ -511,9 +522,7 @@ async def test_create_user_success(
     assert body["id"] is not None
 
 
-async def test_create_user_invalid_role_400(
-    api_client: AsyncClient, super_admin_headers: dict
-):
+async def test_create_user_invalid_role_400(api_client: AsyncClient, super_admin_headers: dict):
     r = await api_client.post(
         "/admin/users",
         json={"email": "x@x.com", "full_name": "X", "role": "owner"},
@@ -537,7 +546,9 @@ async def test_create_user_duplicate_email_409(
 async def test_create_user_missing_required_fields_422(
     api_client: AsyncClient, super_admin_headers: dict
 ):
-    r = await api_client.post("/admin/users", json={"email": "x@x.com"}, headers=super_admin_headers)
+    r = await api_client.post(
+        "/admin/users", json={"email": "x@x.com"}, headers=super_admin_headers
+    )
     assert r.status_code == 422
 
 
@@ -697,9 +708,7 @@ async def test_call_log_is_read_only(api_client: AsyncClient, super_admin_header
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def test_user_cannot_access_any_admin_endpoints(
-    api_client: AsyncClient, user_headers: dict
-):
+async def test_user_cannot_access_any_admin_endpoints(api_client: AsyncClient, user_headers: dict):
     """A non-super_admin token must be rejected on every admin route."""
     endpoints = [
         ("GET", "/admin/clients"),

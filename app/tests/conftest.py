@@ -15,9 +15,7 @@ is a fixed test-only value — never used outside this suite.
 
 import os
 
-os.environ.setdefault(
-    "DATABASE_URL", "postgresql+psycopg2://test:test@localhost:5432/test"
-)
+os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://test:test@localhost:5432/test")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-not-for-production")
 os.environ.setdefault("JWT_ALGORITHM", "HS256")

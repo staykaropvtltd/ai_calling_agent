@@ -22,8 +22,8 @@ class Client(Base):
     # slug: URL-safe unique identifier for the tenant. Nullable in DB so that
     # rows created before this column was added don't violate NOT NULL.
     slug = Column(String(100), unique=True, nullable=True, index=True)
-    plan = Column(String(50), server_default="starter")           # starter | pro | enterprise
-    status = Column(String(20), server_default="active")          # active | suspended | inactive
+    plan = Column(String(50), server_default="starter")  # starter | pro | enterprise
+    status = Column(String(20), server_default="active")  # active | suspended | inactive
     contact_email = Column(String(255), nullable=True)
     contact_phone = Column(String(50), nullable=True)
     api_limit = Column(Integer, server_default="100")
@@ -46,9 +46,9 @@ class User(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
     email = Column(String(255), unique=True, nullable=False, index=True)
     full_name = Column(String(255), nullable=False)
-    role = Column(String(50), server_default="agent")             # super_admin | tenant_admin | agent
+    role = Column(String(50), server_default="agent")  # super_admin | tenant_admin | agent
     tenant_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
-    status = Column(String(20), server_default="active")          # active | suspended
+    status = Column(String(20), server_default="active")  # active | suspended
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     client = relationship("Client", back_populates="users")

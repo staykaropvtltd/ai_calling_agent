@@ -39,7 +39,9 @@ DB_SSL_REQUIRED: bool = os.getenv("DB_SSL_REQUIRED", "true").lower() == "true"
 JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "")
 JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
-JWT_REFRESH_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_MINUTES", "10080"))  # 7 days
+JWT_REFRESH_TOKEN_EXPIRE_MINUTES: int = int(
+    os.getenv("JWT_REFRESH_TOKEN_EXPIRE_MINUTES", "10080")
+)  # 7 days
 
 # ── Admin credentials ─────────────────────────────────────────────────────────
 # docker-compose does not forward API_USERNAME / API_PASSWORD to the container,

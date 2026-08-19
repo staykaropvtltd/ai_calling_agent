@@ -36,7 +36,7 @@ def get_current_user(
     except InvalidTokenError:
         # Same generic detail for every failure mode (expired, malformed,
         # bad signature, missing claims) — do not leak which check failed.
-        raise unauthorized
+        raise unauthorized from None
 
     return AuthenticatedUser(
         user_id=payload["user_id"],

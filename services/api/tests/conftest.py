@@ -99,6 +99,7 @@ def agent_headers() -> dict:
 @pytest.fixture
 def make_tenant_admin_headers():
     """Factory fixture: call with a client_id to get headers for that tenant's admin."""
+
     def _make(client_id: int) -> dict:
         expire = datetime.now(UTC) + timedelta(minutes=30)
         token = jwt.encode(
@@ -113,4 +114,5 @@ def make_tenant_admin_headers():
             _JWT_ALG,
         )
         return {"Authorization": f"Bearer {token}"}
+
     return _make

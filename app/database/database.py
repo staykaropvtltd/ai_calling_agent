@@ -22,11 +22,11 @@ if DB_SSL_REQUIRED:
 engine = create_async_engine(
     DATABASE_URL,
     connect_args=_connect_args,
-    pool_size=5,           # connections held open
-    max_overflow=10,       # extra connections allowed under load
-    pool_pre_ping=True,    # discard stale connections before checkout
-    pool_recycle=1800,     # recycle connections every 30 min
-    echo=False,            # set True temporarily to log all SQL
+    pool_size=5,  # connections held open
+    max_overflow=10,  # extra connections allowed under load
+    pool_pre_ping=True,  # discard stale connections before checkout
+    pool_recycle=1800,  # recycle connections every 30 min
+    echo=False,  # set True temporarily to log all SQL
 )
 
 # ── Session factory ───────────────────────────────────────────────────────────

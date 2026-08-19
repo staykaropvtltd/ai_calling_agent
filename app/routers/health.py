@@ -7,25 +7,17 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.database.database import engine
 from app.services.redis_service import redis_client
 
-router = APIRouter(
-    prefix="/api/v1",
-    tags=["Health"]
-)
+router = APIRouter(prefix="/api/v1", tags=["Health"])
 
 
 @router.get("/health")
 def health():
-    return {
-        "status": "ok"
-    }
+    return {"status": "ok"}
 
 
 @router.get("/health/ready")
 async def readiness():
-    checks = {
-        "postgresql": "ok",
-        "redis": "ok"
-    }
+    checks = {"postgresql": "ok", "redis": "ok"}
 
     try:
         async with engine.connect() as connection:
@@ -39,15 +31,6 @@ async def readiness():
         checks["redis"] = "error"
 
     if checks["postgresql"] != "ok" or checks["redis"] != "ok":
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "not_ready",
-                "checks": checks
-            }
-        )
+        return JSONResponse(status_code=503, content={"status": "not_ready", "checks": checks})
 
-    return {
-        "status": "ready",
-        "checks": checks
-    }
+    return {"status": "ready", "checks": checks}

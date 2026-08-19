@@ -23,78 +23,68 @@ def test_health():
     response = client.get("/api/v1/health")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "status": "ok"
-    }
+    assert response.json() == {"status": "ok"}
 
 
 def test_readiness_when_dependencies_are_healthy():
-    with patch("app.routers.health.engine", _async_engine()), patch(
-        "app.routers.health.redis_client.ping"
-    ) as mock_ping:
-
+    with (
+        patch("app.routers.health.engine", _async_engine()),
+        patch("app.routers.health.redis_client.ping") as mock_ping,
+    ):
         response = client.get("/api/v1/health/ready")
 
         assert response.status_code == 200
-        assert response.json() == {
-            "status": "ready",
-            "checks": {
-                "postgresql": "ok",
-                "redis": "ok"
-            }
-        }
+        assert response.json() == {"status": "ready", "checks": {"postgresql": "ok", "redis": "ok"}}
 
         mock_ping.assert_called_once()
 
 
 def test_readiness_when_postgresql_is_unavailable():
-    with patch(
-        "app.routers.health.engine",
-        _async_engine(pg_error=SQLAlchemyError("PostgreSQL unavailable")),
-    ), patch("app.routers.health.redis_client.ping"):
-
+    with (
+        patch(
+            "app.routers.health.engine",
+            _async_engine(pg_error=SQLAlchemyError("PostgreSQL unavailable")),
+        ),
+        patch("app.routers.health.redis_client.ping"),
+    ):
         response = client.get("/api/v1/health/ready")
 
         assert response.status_code == 503
         assert response.json() == {
             "status": "not_ready",
-            "checks": {
-                "postgresql": "error",
-                "redis": "ok"
-            }
+            "checks": {"postgresql": "error", "redis": "ok"},
         }
 
 
 def test_readiness_when_redis_is_unavailable():
-    with patch("app.routers.health.engine", _async_engine()), patch(
-        "app.routers.health.redis_client.ping",
-        side_effect=redis.RedisError("Redis unavailable"),
+    with (
+        patch("app.routers.health.engine", _async_engine()),
+        patch(
+            "app.routers.health.redis_client.ping",
+            side_effect=redis.RedisError("Redis unavailable"),
+        ),
     ):
-
         response = client.get("/api/v1/health/ready")
 
         assert response.status_code == 503
         assert response.json() == {
             "status": "not_ready",
-            "checks": {
-                "postgresql": "ok",
-                "redis": "error"
-            }
+            "checks": {"postgresql": "ok", "redis": "error"},
         }
 
 
 def test_liveness_when_dependencies_are_unavailable():
-    with patch(
-        "app.routers.health.engine",
-        _async_engine(pg_error=SQLAlchemyError("PostgreSQL unavailable")),
-    ), patch(
-        "app.routers.health.redis_client.ping",
-        side_effect=redis.RedisError("Redis unavailable"),
+    with (
+        patch(
+            "app.routers.health.engine",
+            _async_engine(pg_error=SQLAlchemyError("PostgreSQL unavailable")),
+        ),
+        patch(
+            "app.routers.health.redis_client.ping",
+            side_effect=redis.RedisError("Redis unavailable"),
+        ),
     ):
-
         response = client.get("/api/v1/health")
 
         assert response.status_code == 200
-        assert response.json() == {
-            "status": "ok"
-        }
+        assert response.json() == {"status": "ok"}
