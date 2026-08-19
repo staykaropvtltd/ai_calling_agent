@@ -6,6 +6,7 @@ from app.auth.router import router as auth_router
 from app.database.database import Base, engine
 from app.routers.home import router as home_router
 from app.routers.health import router as health_router
+from app.routers.auth import router as auth_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
