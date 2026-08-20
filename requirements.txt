@@ -6,3 +6,5 @@ python-jose[cryptography]
 redis
 python-dotenv
 requests
+PyJWT
+bcryptPyJWT
