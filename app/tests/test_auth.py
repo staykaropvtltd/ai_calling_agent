@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
@@ -12,7 +12,6 @@ from app.core import security
 from app.database.database import Base, get_db
 from app.models.user import User
 from main import app
-
 
 # --- Isolated in-memory SQLite DB for auth tests, independent of the
 # app's real Postgres engine (which is never contacted in these tests). ---
@@ -63,9 +62,7 @@ def test_create_access_token_contains_required_claims():
         user_id=42, tenant_id="tenant-xyz", role="admin"
     )
 
-    payload = jwt.decode(
-        token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
-    )
+    payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
 
     assert payload["user_id"] == "42"
     assert payload["tenant_id"] == "tenant-xyz"
@@ -89,7 +86,7 @@ def test_decode_access_token_expired_rejected():
         "user_id": "1",
         "tenant_id": "t1",
         "role": "agent",
-        "exp": datetime.now(timezone.utc) - timedelta(minutes=5),
+        "exp": datetime.now(UTC) - timedelta(minutes=5),
     }
     token = make_raw_token(expired_payload)
 
@@ -110,11 +107,9 @@ def test_decode_access_token_wrong_secret_rejected():
         "user_id": "1",
         "tenant_id": "t1",
         "role": "agent",
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+        "exp": datetime.now(UTC) + timedelta(minutes=5),
     }
-    token = make_raw_token(
-        valid_payload, secret="a-completely-different-secret-value-32bytes"
-    )
+    token = make_raw_token(valid_payload, secret="a-completely-different-secret-value-32bytes")
 
     with pytest.raises(security.InvalidTokenError):
         security.decode_access_token(token)
@@ -129,7 +124,7 @@ def test_decode_access_token_missing_required_claims_rejected():
     incomplete_payload = {
         "user_id": "1",
         # tenant_id and role deliberately omitted
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+        "exp": datetime.now(UTC) + timedelta(minutes=5),
     }
     token = make_raw_token(incomplete_payload)
 
@@ -143,13 +138,9 @@ def test_decode_access_token_missing_required_claims_rejected():
 
 
 def test_protected_endpoint_valid_token_returns_user_context():
-    token, _ = security.create_access_token(
-        user_id=7, tenant_id="tenant-7", role="agent"
-    )
+    token, _ = security.create_access_token(user_id=7, tenant_id="tenant-7", role="agent")
 
-    response = client.get(
-        "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
-    )
+    response = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 200
     body = response.json()
@@ -163,9 +154,7 @@ def test_protected_endpoint_missing_token_rejected():
 
 
 def test_protected_endpoint_malformed_token_rejected():
-    response = client.get(
-        "/api/v1/auth/me", headers={"Authorization": "Bearer not-a-jwt"}
-    )
+    response = client.get("/api/v1/auth/me", headers={"Authorization": "Bearer not-a-jwt"})
 
     assert response.status_code == 401
 
@@ -175,13 +164,11 @@ def test_protected_endpoint_expired_token_rejected():
         "user_id": "1",
         "tenant_id": "t1",
         "role": "agent",
-        "exp": datetime.now(timezone.utc) - timedelta(minutes=1),
+        "exp": datetime.now(UTC) - timedelta(minutes=1),
     }
     token = make_raw_token(expired_payload)
 
-    response = client.get(
-        "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
-    )
+    response = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 401
 
@@ -191,13 +178,11 @@ def test_protected_endpoint_invalid_signature_rejected():
         "user_id": "1",
         "tenant_id": "t1",
         "role": "agent",
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+        "exp": datetime.now(UTC) + timedelta(minutes=5),
     }
     token = make_raw_token(valid_payload, secret="a-different-wrong-secret-value-32b")
 
-    response = client.get(
-        "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
-    )
+    response = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 401
 
@@ -205,13 +190,11 @@ def test_protected_endpoint_invalid_signature_rejected():
 def test_protected_endpoint_missing_claims_rejected():
     incomplete_payload = {
         "user_id": "1",
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+        "exp": datetime.now(UTC) + timedelta(minutes=5),
     }
     token = make_raw_token(incomplete_payload)
 
-    response = client.get(
-        "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
-    )
+    response = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 401
 

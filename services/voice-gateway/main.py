@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from call_session import CallSessionManager
 from fastapi import FastAPI, WebSocket
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -8,9 +9,6 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 from pipecat.workers.runner import WorkerRunner
-
-from call_session import CallSessionManager
-
 
 app = FastAPI(title="StayKaro Voice Gateway")
 

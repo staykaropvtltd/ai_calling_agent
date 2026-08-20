@@ -1,25 +1,10 @@
-# ============================================
-# STAYKARO AI CALLER — API dependencies (app/)
-# ============================================
-
-fastapi==0.115.6
-uvicorn[standard]==0.32.1
-python-dotenv==1.0.1
-
-# --- Database ---
-sqlalchemy==2.0.46
-psycopg2-binary==2.9.10
-
-# --- Cache / call sessions ---
-redis==8.1.0
-
-# --- External integrations ---
-requests==2.32.3
-
-# --- Auth (NK-05) ---
-pyjwt==2.13.0
-bcrypt==4.0.1
-
-# --- Testing ---
-pytest==8.3.4
-httpx==0.28.1
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+python-jose[cryptography]
+redis
+python-dotenv
+requests
+PyJWT
+bcrypt

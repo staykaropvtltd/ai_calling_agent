@@ -19,7 +19,7 @@ def test_call_lifecycle_redis():
     call_id = "test-call-001"
 
     # WebSocket connect → session should be created
-    with client.websocket_connect(f"/ws/{call_id}") as websocket:
+    with client.websocket_connect(f"/ws/{call_id}"):
         session = session_manager.get(call_id)
 
         # In-memory session exists
