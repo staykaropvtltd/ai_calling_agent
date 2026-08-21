@@ -24,14 +24,9 @@ RUN apt-get update && \
 RUN python -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
-# ---------------------------------------------------------------
 # Python dependencies
-# Service owner: uncomment the lines below AFTER creating
-# a requirements.txt file in this directory with your deps.
-# Pipecat, websockets, Deepgram SDK, Groq SDK, OpenAI SDK, etc.
-# ---------------------------------------------------------------
-# COPY requirements.txt .
-# RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 
 # -------------------------------------------
@@ -58,12 +53,8 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuse
 
 WORKDIR /app
 
-# ---------------------------------------------------------------
 # Application code
-# Service owner: uncomment the line below AFTER creating your
-# src/ directory with the application entry point.
-# ---------------------------------------------------------------
-# COPY src/ .
+COPY src/ ./src/
 
 # Ensure the app directory is owned by the non-root user
 RUN chown -R appuser:appuser /app
@@ -77,8 +68,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 EXPOSE 9000
 
-# ---------------------------------------------------------------
-# Service owner: replace the CMD below with your entry point.
-# Example: CMD ["python", "-m", "src.main"]
-# ---------------------------------------------------------------
-CMD ["python", "-m", "src.main"]
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "9000"]

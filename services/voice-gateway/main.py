@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import os
-
+from call_session import CallSessionManager
 from fastapi import FastAPI, WebSocket
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -10,16 +9,6 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 from pipecat.workers.runner import WorkerRunner
-
-from call_session import CallSessionManager
-from exotel_routes import build_exotel_router
-from internal_calls import InternalCallsClient
-from exotel_stream import build_exotel_stream_router
-from pipeline_handle import CallPipelineHandle
-from packages.providers.telephony import ExotelSettings, ProviderError, TwilioSettings
-from twilio_routes import build_twilio_router
-from transcript_handler import make_transcript_handler
-
 
 app = FastAPI(title="StayKaro Voice Gateway")
 

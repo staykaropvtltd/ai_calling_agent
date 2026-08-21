@@ -23,13 +23,7 @@ RUN apt-get update && \
 RUN python -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
-# ---------------------------------------------------------------
-# Python dependencies
-# Service owner: uncomment the lines below AFTER creating
-# a requirements.txt file in this directory with your deps.
-# ---------------------------------------------------------------
-# COPY requirements.txt .
-# RUN pip install --no-cache-dir -r requirements.txt
+# (no extra Python deps required for worker placeholder)
 
 
 # -------------------------------------------
@@ -56,12 +50,8 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuse
 
 WORKDIR /app
 
-# ---------------------------------------------------------------
 # Application code
-# Service owner: uncomment the line below AFTER creating your
-# src/ directory with the application entry point.
-# ---------------------------------------------------------------
-# COPY src/ .
+COPY src/ ./src/
 
 # Ensure the app directory is owned by the non-root user
 RUN chown -R appuser:appuser /app
@@ -72,8 +62,4 @@ USER appuser
 # Worker service does not expose an HTTP port — runs background jobs only.
 # No HEALTHCHECK — health is determined by process liveness & job queues.
 
-# ---------------------------------------------------------------
-# Service owner: replace the CMD below with your entry point.
-# Example: CMD ["python", "-m", "src.worker"]
-# ---------------------------------------------------------------
 CMD ["python", "-m", "src.main"]

@@ -6,7 +6,7 @@ testable and has a single, obvious place to change if the signing
 algorithm or claim set ever needs to move (e.g. to asymmetric keys).
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
 import jwt
@@ -32,9 +32,7 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(
-        plain_password.encode("utf-8"), hashed_password.encode("utf-8")
-    )
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
 def create_access_token(*, user_id, tenant_id, role: str) -> tuple[str, datetime]:
@@ -42,7 +40,7 @@ def create_access_token(*, user_id, tenant_id, role: str) -> tuple[str, datetime
         # Fail loudly rather than sign with an empty/None secret.
         raise RuntimeError("JWT_SECRET_KEY is not configured")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expire = now + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
 
     payload = {

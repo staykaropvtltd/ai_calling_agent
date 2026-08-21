@@ -1,6 +1,4 @@
+fastapi==0.115.6
 pipecat-ai[websocket]==1.7.0
-uvicorn[standard]
-redis
-httpx
-python-multipart
-websockets
+uvicorn[standard]==0.30.6
+redis==5.0.8
