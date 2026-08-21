@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.services.redis_service import (
@@ -19,9 +19,7 @@ class CallSession:
     call_id: str
     tenant_id: str
     agent_id: str
-    started_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     ended_at: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -32,7 +30,7 @@ class CallSession:
     def end(self) -> None:
         """Mark the call as ended."""
         if self.ended_at is None:
-            self.ended_at = datetime.now(timezone.utc)
+            self.ended_at = datetime.now(UTC)
 
 
 class CallSessionManager:
@@ -85,11 +83,7 @@ class CallSessionManager:
             return None
 
         started_at = redis_session.get("started_at")
-        parsed_started_at = (
-            datetime.fromisoformat(started_at)
-            if started_at
-            else datetime.now(timezone.utc)
-        )
+        parsed_started_at = datetime.fromisoformat(started_at) if started_at else datetime.now(UTC)
 
         return CallSession(
             call_id=redis_session["call_id"],
@@ -122,10 +116,7 @@ class CallSessionManager:
         return session
 
     def active_count(self) -> int:
-        return sum(
-            session.is_active
-            for session in self._sessions.values()
-        )
+        return sum(session.is_active for session in self._sessions.values())
 
     def clear(self) -> None:
         """End and remove all tracked sessions."""

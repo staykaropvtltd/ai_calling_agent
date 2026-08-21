@@ -7,11 +7,7 @@ from app.models.user import User
 
 
 def authenticate_user(db: Session, email: str, password: str) -> User | None:
-    user = (
-        db.query(User)
-        .filter(User.email == email, User.is_active.is_(True))
-        .first()
-    )
+    user = db.query(User).filter(User.email == email, User.is_active.is_(True)).first()
 
     if not user or not verify_password(password, user.hashed_password):
         return None

@@ -1,0 +1,64 @@
+# ============================================
+# STAYKARO AI CALLER — Root .dockerignore
+# Applies when build context is project root (.)
+# ============================================
+
+# --- Version control ---
+.git
+.gitignore
+
+# --- Environment & secrets ---
+.env
+.env.*
+*.pem
+*.key
+*.cert
+
+# --- Python artifacts ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+wheels/
+*.whl
+.venv
+venv/
+env/
+
+# --- IDE & editors ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Docker ---
+.docker/
+
+# --- Testing & linting ---
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Services that are not the API ---
+services/voice-gateway/
+services/integration-service/
+services/worker/
+
+# --- Infrastructure (not needed in container) ---
+infrastructure/
+apps/
+packages/
