@@ -1,6 +1,7 @@
+from datetime import datetime
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from datetime import datetime
 
 router = APIRouter(prefix="/internal/v1/calls", tags=["Internal"])
 
