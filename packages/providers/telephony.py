@@ -40,7 +40,7 @@ class ExotelSettings:
     timeout_seconds: float = 10.0
 
     @classmethod
-    def from_environment(cls) -> "ExotelSettings":
+    def from_environment(cls) -> ExotelSettings:
         names = {
             "api_key": "EXOTEL_API_KEY",
             "api_secret": "EXOTEL_API_SECRET",

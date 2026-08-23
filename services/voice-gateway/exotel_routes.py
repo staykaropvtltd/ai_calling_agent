@@ -81,9 +81,7 @@ def build_exotel_router(
             try:
                 tenant_id, agent_id = await routing.resolve(payload.dialed_number)
             except InternalApiError as exc:
-                raise HTTPException(
-                    status_code=404, detail="phone-number route not found"
-                ) from exc
+                raise HTTPException(status_code=404, detail="phone-number route not found") from exc
 
             call_id = str(uuid4())
             try:
@@ -108,7 +106,9 @@ def build_exotel_router(
             call_id = provider_calls.get(payload.provider_call_id)
             if not call_id:
                 return {"status": "ignored", "call_id": ""}
-            end_reason = "provider_failure" if payload.event.lower() == "failed" else "caller_hangup"
+            end_reason = (
+                "provider_failure" if payload.event.lower() == "failed" else "caller_hangup"
+            )
             try:
                 await calls.finalize(
                     call_id,
