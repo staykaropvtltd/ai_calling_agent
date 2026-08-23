@@ -125,10 +125,10 @@ class UserResponse(BaseModel):
     user_id: str
     email: str
     full_name: str
-    role: Optional[str]
-    tenant_id: Optional[str]
-    status: Optional[str]
-    created_at: Optional[datetime]
+    role: Optional[str] = None
+    tenant_id: Optional[str] = None
+    status: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 def _user_to_response(user: User) -> UserResponse:
