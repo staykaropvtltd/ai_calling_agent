@@ -521,3 +521,215 @@ async def get_call(
     if user.get("role") == "tenant_admin" and call.client_id != user.get("client_id"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return call
+
+
+# ── Schemas — Tenants (frontend-facing alias of Clients) ─────────────────────
+# The admin-dashboard TypeScript types use "tenant" terminology and expect
+# tenant_id (str) rather than id (int). These schemas bridge that gap while
+# keeping the internal Client model unchanged.
+
+
+class TenantResponse(BaseModel):
+    tenant_id: str
+    name: str
+    slug: Optional[str] = None
+    plan: Optional[str] = None
+    status: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    api_limit: Optional[int] = None
+    max_concurrent_calls: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class PaginatedTenants(BaseModel):
+    data: list[TenantResponse]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+
+
+class TenantStats(BaseModel):
+    tenant_id: str
+    total_calls: int
+    calls_this_month: int
+    active_users: int
+    plan_call_limit: int
+    plan_usage_pct: float
+
+
+def _client_to_tenant(client: Client) -> TenantResponse:
+    return TenantResponse(
+        tenant_id=str(client.id),
+        name=client.name,
+        slug=client.slug,
+        plan=client.plan,
+        status=client.status,
+        contact_email=client.contact_email,
+        contact_phone=client.contact_phone,
+        api_limit=client.api_limit,
+        max_concurrent_calls=client.max_concurrent_calls,
+        created_at=client.created_at,
+        updated_at=client.updated_at,
+    )
+
+
+# ── Tenant endpoints (/admin/tenants) ─────────────────────────────────────────
+
+
+@router.post("/tenants", response_model=TenantResponse, status_code=status.HTTP_201_CREATED)
+async def create_tenant(
+    body: ClientCreate,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_require_super_admin),
+) -> TenantResponse:
+    if body.plan not in VALID_PLANS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"plan must be one of {sorted(VALID_PLANS)}",
+        )
+    existing = await db.execute(select(Client).where(Client.slug == body.slug))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slug already exists")
+    client = Client(**body.model_dump())
+    db.add(client)
+    await db.commit()
+    await db.refresh(client)
+    logger.info("Tenant created: id=%s slug=%s", client.id, client.slug)
+    return _client_to_tenant(client)
+
+
+@router.get("/tenants", response_model=PaginatedTenants)
+async def list_tenants(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    search: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_require_super_admin),
+) -> PaginatedTenants:
+    stmt = select(Client)
+    if status_filter:
+        stmt = stmt.where(Client.status == status_filter)
+    if search:
+        stmt = stmt.where(Client.name.ilike(f"%{search}%"))
+
+    total: int = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    rows = (await db.execute(stmt.offset((page - 1) * per_page).limit(per_page))).scalars().all()
+
+    return PaginatedTenants(
+        data=[_client_to_tenant(c) for c in rows],
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=_paginate(total, page, per_page),
+    )
+
+
+@router.get("/tenants/{tenant_id}", response_model=TenantResponse)
+async def get_tenant(
+    tenant_id: int,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_require_super_admin),
+) -> TenantResponse:
+    client = await db.get(Client, tenant_id)
+    if not client:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    return _client_to_tenant(client)
+
+
+@router.put("/tenants/{tenant_id}", response_model=TenantResponse)
+async def update_tenant(
+    tenant_id: int,
+    body: ClientUpdate,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_require_super_admin),
+) -> TenantResponse:
+    client = await db.get(Client, tenant_id)
+    if not client:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    updates = body.model_dump(exclude_none=True)
+    if "plan" in updates and updates["plan"] not in VALID_PLANS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"plan must be one of {sorted(VALID_PLANS)}",
+        )
+    if "status" in updates and updates["status"] not in VALID_CLIENT_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"status must be one of {sorted(VALID_CLIENT_STATUSES)}",
+        )
+    if "slug" in updates and updates["slug"] != client.slug:
+        clash = await db.execute(select(Client).where(Client.slug == updates["slug"]))
+        if clash.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slug already exists")
+
+    for field, value in updates.items():
+        setattr(client, field, value)
+    await db.commit()
+    await db.refresh(client)
+    return _client_to_tenant(client)
+
+
+@router.delete("/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tenant(
+    tenant_id: int,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_require_super_admin),
+) -> None:
+    """Soft delete — sets status to 'inactive'. Data is retained."""
+    client = await db.get(Client, tenant_id)
+    if not client:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    client.status = "inactive"
+    await db.commit()
+    logger.info("Tenant soft-deleted: id=%s", tenant_id)
+
+
+@router.get("/tenants/{tenant_id}/stats", response_model=TenantStats)
+async def get_tenant_stats(
+    tenant_id: int,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_require_super_admin),
+) -> TenantStats:
+    client = await db.get(Client, tenant_id)
+    if not client:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    total_calls: int = (
+        await db.execute(select(func.count(Caller.id)).where(Caller.client_id == tenant_id))
+    ).scalar_one()
+
+    start_of_month = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    calls_this_month: int = (
+        await db.execute(
+            select(func.count(Caller.id)).where(
+                Caller.client_id == tenant_id,
+                Caller.created_at >= start_of_month,
+            )
+        )
+    ).scalar_one()
+
+    active_users: int = (
+        await db.execute(
+            select(func.count(User.id)).where(
+                User.tenant_id == tenant_id,
+                User.status == "active",
+            )
+        )
+    ).scalar_one()
+
+    limit = client.api_limit or 0
+    usage_pct = round((total_calls / limit) * 100, 1) if limit else 0.0
+
+    return TenantStats(
+        tenant_id=str(tenant_id),
+        total_calls=total_calls,
+        calls_this_month=calls_this_month,
+        active_users=active_users,
+        plan_call_limit=limit,
+        plan_usage_pct=usage_pct,
+    )

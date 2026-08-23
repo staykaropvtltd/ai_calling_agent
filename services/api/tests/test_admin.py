@@ -933,3 +933,225 @@ async def test_tenant_admin_can_get_own_call_by_id(
     r = await api_client.get(f"/admin/calls/{own_call.id}", headers=headers)
     assert r.status_code == 200
     assert r.json()["id"] == own_call.id
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tenant CRUD (/admin/tenants — frontend-facing alias of /admin/clients)
+# Responses use tenant_id (str) instead of id (int) to match the
+# admin-dashboard TypeScript types (apps/admin-dashboard/src/lib/types/tenant.ts).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_create_tenant_success(api_client: AsyncClient, super_admin_headers: dict):
+    """POST /admin/tenants returns 201 with tenant_id as a string, not id as an int."""
+    r = await api_client.post(
+        "/admin/tenants",
+        json={"name": "Grand Palace Hotels", "slug": "grand-palace", "plan": "pro"},
+        headers=super_admin_headers,
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["slug"] == "grand-palace"
+    assert body["plan"] == "pro"
+    assert body["status"] == "active"
+    assert isinstance(body["tenant_id"], str)
+    assert "id" not in body
+
+
+async def test_create_tenant_invalid_plan_400(api_client: AsyncClient, super_admin_headers: dict):
+    r = await api_client.post(
+        "/admin/tenants",
+        json={"name": "X", "slug": "x-bad", "plan": "invalid-plan"},
+        headers=super_admin_headers,
+    )
+    assert r.status_code == 400
+
+
+async def test_create_tenant_duplicate_slug_409(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    await _create_client(db_session, slug="taken-slug")
+    r = await api_client.post(
+        "/admin/tenants",
+        json={"name": "Another", "slug": "taken-slug"},
+        headers=super_admin_headers,
+    )
+    assert r.status_code == 409
+    assert "Slug already exists" in r.json()["detail"]
+
+
+async def test_list_tenants_returns_tenant_id_string(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    """GET /admin/tenants items must have tenant_id (str), not id (int)."""
+    await _create_client(db_session, name="Tenant A", slug="tenant-a-list")
+    r = await api_client.get("/admin/tenants", headers=super_admin_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1
+    first = body["data"][0]
+    assert "tenant_id" in first
+    assert isinstance(first["tenant_id"], str)
+    assert "id" not in first
+
+
+async def test_list_tenants_pagination(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    for i in range(5):
+        await _create_client(db_session, name=f"T{i}", slug=f"t-pg-{i}")
+    r = await api_client.get("/admin/tenants?page=1&per_page=2", headers=super_admin_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["data"]) == 2
+    assert body["total"] == 5
+    assert body["total_pages"] == 3
+
+
+async def test_list_tenants_filter_by_status(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    await _create_client(db_session, slug="active-tenant")
+    inactive = Client(name="Gone", slug="gone-tenant", status="inactive")
+    db_session.add(inactive)
+    await db_session.commit()
+
+    r = await api_client.get("/admin/tenants?status=active", headers=super_admin_headers)
+    assert r.status_code == 200
+    slugs = [t["slug"] for t in r.json()["data"]]
+    assert "active-tenant" in slugs
+    assert "gone-tenant" not in slugs
+
+
+async def test_get_tenant_found(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    client = await _create_client(db_session, name="My Tenant", slug="my-tenant-get")
+    r = await api_client.get(f"/admin/tenants/{client.id}", headers=super_admin_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tenant_id"] == str(client.id)
+    assert body["name"] == "My Tenant"
+
+
+async def test_get_tenant_not_found_404(api_client: AsyncClient, super_admin_headers: dict):
+    r = await api_client.get("/admin/tenants/99999", headers=super_admin_headers)
+    assert r.status_code == 404
+
+
+async def test_update_tenant_success(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    client = await _create_client(db_session, name="Old Name", slug="update-tenant")
+    r = await api_client.put(
+        f"/admin/tenants/{client.id}",
+        json={"name": "New Name", "plan": "enterprise"},
+        headers=super_admin_headers,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "New Name"
+    assert body["plan"] == "enterprise"
+    assert body["tenant_id"] == str(client.id)
+
+
+async def test_update_tenant_invalid_status_400(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    client = await _create_client(db_session, slug="upd-status-t")
+    r = await api_client.put(
+        f"/admin/tenants/{client.id}",
+        json={"status": "deleted"},
+        headers=super_admin_headers,
+    )
+    assert r.status_code == 400
+
+
+async def test_update_tenant_conflicting_slug_409(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    c1 = await _create_client(db_session, slug="existing-t-slug")
+    c2 = await _create_client(db_session, name="C2", slug="other-t-slug")
+    r = await api_client.put(
+        f"/admin/tenants/{c2.id}",
+        json={"slug": c1.slug},
+        headers=super_admin_headers,
+    )
+    assert r.status_code == 409
+    assert "Slug already exists" in r.json()["detail"]
+
+
+async def test_delete_tenant_is_soft_not_hard(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    """DELETE /admin/tenants/{id} must set status=inactive, not remove the row."""
+    client = await _create_client(db_session, slug="soft-del-tenant")
+    client_id = client.id
+
+    r = await api_client.delete(f"/admin/tenants/{client_id}", headers=super_admin_headers)
+    assert r.status_code == 204
+
+    still_there = await db_session.get(Client, client_id)
+    assert still_there is not None
+    assert still_there.status == "inactive"
+
+
+async def test_delete_tenant_not_found_404(api_client: AsyncClient, super_admin_headers: dict):
+    r = await api_client.delete("/admin/tenants/99999", headers=super_admin_headers)
+    assert r.status_code == 404
+
+
+async def test_tenant_stats_empty(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    client = await _create_client(db_session, slug="stats-empty-t")
+    r = await api_client.get(f"/admin/tenants/{client.id}/stats", headers=super_admin_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tenant_id"] == str(client.id)
+    assert body["total_calls"] == 0
+    assert body["calls_this_month"] == 0
+    assert body["active_users"] == 0
+
+
+async def test_tenant_stats_with_calls_and_users(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    client = await _create_client(db_session, slug="stats-data-t")
+    await _create_call(db_session, client_id=client.id)
+    await _create_call(db_session, client_id=client.id)
+    await _create_user(db_session, email="u@stats-t.com", tenant_id=client.id)
+
+    r = await api_client.get(f"/admin/tenants/{client.id}/stats", headers=super_admin_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_calls"] == 2
+    assert body["active_users"] == 1
+    assert body["tenant_id"] == str(client.id)
+
+
+async def test_tenant_stats_not_found_404(api_client: AsyncClient, super_admin_headers: dict):
+    r = await api_client.get("/admin/tenants/99999/stats", headers=super_admin_headers)
+    assert r.status_code == 404
+
+
+async def test_tenant_routes_require_super_admin(
+    api_client: AsyncClient, user_headers: dict, db_session: AsyncSession
+):
+    """All /admin/tenants routes must reject non-super_admin tokens with 403."""
+    tenant = await _create_client(db_session, slug="rbac-tenant")
+    for method, path in [
+        ("GET", "/admin/tenants"),
+        ("POST", "/admin/tenants"),
+        ("GET", f"/admin/tenants/{tenant.id}"),
+        ("PUT", f"/admin/tenants/{tenant.id}"),
+        ("DELETE", f"/admin/tenants/{tenant.id}"),
+        ("GET", f"/admin/tenants/{tenant.id}/stats"),
+    ]:
+        r = await api_client.request(method, path, headers=user_headers, json={})
+        assert r.status_code == 403, f"{method} {path} returned {r.status_code}"
+
+async def test_tenant_routes_require_bearer(api_client: AsyncClient):
+    """All /admin/tenants routes must reject requests without a token."""
+    r = await api_client.get("/admin/tenants")
+    assert r.status_code == 401
