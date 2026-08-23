@@ -167,11 +167,12 @@ jobs:
           pip install -r requirements.txt \
                       -r services/api/requirements.txt \
                       -r services/api/requirements-test.txt \
+                      -r services/voice-gateway/requirements.txt \
                       pytest pytest-cov
 
       - name: Run tests with coverage
         run: |
-          pytest app/tests/ services/api/tests/ \
+          pytest app/tests/ services/api/tests/ tests/ \
             --tb=short \
             --cov=app \
             --cov=src \
