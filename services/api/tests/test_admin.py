@@ -519,7 +519,35 @@ async def test_create_user_success(
     assert body["email"] == "new@example.com"
     assert body["role"] == "tenant_admin"
     assert body["status"] == "active"
-    assert body["id"] is not None
+    assert isinstance(body["user_id"], str)
+    assert "id" not in body
+    assert isinstance(body["tenant_id"], str)
+
+
+async def test_get_user_response_shape(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    """GET /admin/users/{id} returns user_id (str), no 'id' field, tenant_id as str."""
+    client = await _create_client(db_session)
+    user = await _create_user(db_session, tenant_id=client.id)
+    r = await api_client.get(f"/admin/users/{user.id}", headers=super_admin_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body["user_id"], str)
+    assert body["user_id"] == user.id
+    assert "id" not in body
+    assert isinstance(body["tenant_id"], str)
+    assert body["tenant_id"] == str(client.id)
+
+
+async def test_user_without_tenant_has_null_tenant_id(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    user = await _create_user(db_session)
+    r = await api_client.get(f"/admin/users/{user.id}", headers=super_admin_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tenant_id"] is None
 
 
 async def test_create_user_invalid_role_400(api_client: AsyncClient, super_admin_headers: dict):
@@ -1150,6 +1178,7 @@ async def test_tenant_routes_require_super_admin(
     ]:
         r = await api_client.request(method, path, headers=user_headers, json={})
         assert r.status_code == 403, f"{method} {path} returned {r.status_code}"
+
 
 async def test_tenant_routes_require_bearer(api_client: AsyncClient):
     """All /admin/tenants routes must reject requests without a token."""
