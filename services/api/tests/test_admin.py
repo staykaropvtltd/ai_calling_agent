@@ -1135,15 +1135,21 @@ async def test_tenant_stats_not_found_404(api_client: AsyncClient, super_admin_h
     assert r.status_code == 404
 
 
-async def test_tenant_routes_require_super_admin(api_client: AsyncClient, user_headers: dict):
+async def test_tenant_routes_require_super_admin(
+    api_client: AsyncClient, user_headers: dict, db_session: AsyncSession
+):
     """All /admin/tenants routes must reject non-super_admin tokens with 403."""
+    tenant = await _create_client(db_session, slug="rbac-tenant")
     for method, path in [
         ("GET", "/admin/tenants"),
         ("POST", "/admin/tenants"),
+        ("GET", f"/admin/tenants/{tenant.id}"),
+        ("PUT", f"/admin/tenants/{tenant.id}"),
+        ("DELETE", f"/admin/tenants/{tenant.id}"),
+        ("GET", f"/admin/tenants/{tenant.id}/stats"),
     ]:
         r = await api_client.request(method, path, headers=user_headers, json={})
         assert r.status_code == 403, f"{method} {path} returned {r.status_code}"
-
 
 async def test_tenant_routes_require_bearer(api_client: AsyncClient):
     """All /admin/tenants routes must reject requests without a token."""
