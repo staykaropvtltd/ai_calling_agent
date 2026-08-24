@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import hmac
 from datetime import UTC, datetime
-from typing import Annotated, Protocol
+from typing import TYPE_CHECKING, Annotated, Protocol
 from uuid import uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from internal_calls import CallCreation, CallFinalization, InternalApiError, InternalCalls
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
-from packages.providers.telephony import ExotelSettings
+if TYPE_CHECKING:
+    from packages.providers.telephony import ExotelSettings
 
 
 class PhoneRouting(Protocol):
