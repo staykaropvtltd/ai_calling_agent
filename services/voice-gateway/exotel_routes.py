@@ -4,18 +4,53 @@ from __future__ import annotations
 
 import hmac
 from datetime import UTC, datetime
-from typing import Annotated, Protocol
+from typing import TYPE_CHECKING, Annotated, Protocol
 from uuid import uuid4
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from internal_calls import CallCreation, CallFinalization, InternalApiError, InternalCalls
 from pydantic import BaseModel, Field, model_validator
 
-from packages.providers.telephony import ExotelSettings
+if TYPE_CHECKING:
+    from packages.providers.telephony import ExotelSettings
 
 
 class PhoneRouting(Protocol):
     async def resolve(self, dialed_number: str) -> tuple[str, str]: ...
+
+
+class CallStore(Protocol):
+    """Persistent mapping from Exotel provider_call_id to internal call_id.
+
+    Implementations must survive gateway restarts so that end events (completed /
+    failed / disconnected) arriving after a process restart can still be matched
+    to their internal call record and finalized correctly.
+    """
+
+    def set(self, provider_call_id: str, call_id: str) -> None: ...
+    def get(self, provider_call_id: str) -> str | None: ...
+    def delete(self, provider_call_id: str) -> None: ...
+
+
+class _DictCallStore:
+    """In-memory fallback CallStore used when no external store is provided.
+
+    Not restart-safe: the mapping is lost when the process exits.  Used as the
+    default so that existing code and tests that don't supply a call_store
+    continue to work without modification.
+    """
+
+    def __init__(self) -> None:
+        self._store: dict[str, str] = {}
+
+    def set(self, provider_call_id: str, call_id: str) -> None:
+        self._store[provider_call_id] = call_id
+
+    def get(self, provider_call_id: str) -> str | None:
+        return self._store.get(provider_call_id)
+
+    def delete(self, provider_call_id: str) -> None:
+        self._store.pop(provider_call_id, None)
 
 
 class ExotelCallback(BaseModel):
@@ -40,10 +75,11 @@ def build_exotel_router(
     settings: ExotelSettings,
     calls: InternalCalls,
     routing: PhoneRouting | None = None,
+    call_store: CallStore | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/telephony/exotel", tags=["Exotel"])
     handled_events: set[tuple[str, str]] = set()
-    provider_calls: dict[str, str] = {}
+    _store: CallStore = call_store if call_store is not None else _DictCallStore()
 
     @router.post("/callback")
     async def callback(
@@ -63,7 +99,7 @@ def build_exotel_router(
         if key in handled_events:
             return {
                 "status": "duplicate",
-                "call_id": provider_calls.get(payload.provider_call_id, ""),
+                "call_id": _store.get(payload.provider_call_id) or "",
             }
         handled_events.add(key)
 
@@ -99,11 +135,11 @@ def build_exotel_router(
                 ) from exc
 
             session_manager.create(call_id, tenant_id, agent_id)
-            provider_calls[payload.provider_call_id] = call_id
+            _store.set(payload.provider_call_id, call_id)
             return {"status": "session_started", "call_id": call_id}
 
         if payload.event.lower() in {"completed", "failed", "disconnected"}:
-            call_id = provider_calls.get(payload.provider_call_id)
+            call_id = _store.get(payload.provider_call_id)
             if not call_id:
                 return {"status": "ignored", "call_id": ""}
             end_reason = (
@@ -126,10 +162,9 @@ def build_exotel_router(
             if session is not None:
                 session_manager.end(call_id)
                 session_manager.remove(call_id)
-            provider_calls.pop(payload.provider_call_id, None)
-            handled_events.difference_update(
-                {k for k in handled_events if k[0] == payload.provider_call_id}
-            )
+            # Delete only after successful finalization — if finalize() raised above,
+            # the mapping is preserved so the end event can be retried.
+            _store.delete(payload.provider_call_id)
             return {"status": "session_cleaned", "call_id": call_id}
 
         return {"status": "ignored", "call_id": ""}
