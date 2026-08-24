@@ -171,7 +171,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          pytest app/tests/ services/api/tests/ \
+          pytest app/tests/ services/api/tests/ tests/ \
             --tb=short \
             --cov=app \
             --cov=src \
