@@ -7,7 +7,7 @@ export interface TenantUser {
   email: string;
   full_name: string;
   role: UserRole;
-  tenant_id: string;
+  tenant_id: string | null;
   status: UserStatus;
   created_at: string;
 }
