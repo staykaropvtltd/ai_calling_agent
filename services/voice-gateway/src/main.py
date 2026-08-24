@@ -185,7 +185,7 @@ def _register_exotel_router() -> None:
         raise ValueError("EXOTEL_WEBHOOK_TOKEN is not set")
 
     from exotel_routes import build_exotel_router  # noqa: PLC0415
-    from internal_calls import InternalCallsClient  # noqa: PLC0415
+    from internal_calls import InternalCallsClient, InternalPhoneRoutingClient  # noqa: PLC0415
 
     settings = _ExotelConfig(webhook_token=token)
     internal_api_url = os.environ.get("INTERNAL_API_URL", "http://api:8000")
@@ -214,12 +214,13 @@ def _register_exotel_router() -> None:
             "provider_call_id mappings are in-memory only and will not survive a restart."
         )
 
-    routing = None
     if os.environ.get("EXOTEL_DEV_ROUTING", "").lower() in ("1", "true", "yes"):
         from dev_routing import TestExotelRoutingStub  # noqa: PLC0415
 
         routing = TestExotelRoutingStub()
         logger.warning("EXOTEL_DEV_ROUTING=true — only +917314623519 will be routed")
+    else:
+        routing = InternalPhoneRoutingClient(internal_api_url)
 
     app.include_router(build_exotel_router(session_manager, settings, calls, routing, call_store))
     logger.info(

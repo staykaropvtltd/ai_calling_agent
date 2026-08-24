@@ -73,3 +73,41 @@ class Caller(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     client = relationship("Client", back_populates="callers")
+
+
+class Call(Base):
+    """
+    Authoritative record of a single voice call lifecycle, created by the voice
+    gateway when a provider (Exotel etc.) reports the call as connected.
+    call_id is a UUID assigned by the gateway; provider_call_id is the
+    telephony provider's own identifier (e.g. Exotel CallSid).
+    """
+
+    __tablename__ = "calls"
+
+    call_id = Column(String(36), primary_key=True)
+    tenant_id = Column(String(255), nullable=False, index=True)
+    agent_id = Column(String(255), nullable=False)
+    provider_call_id = Column(String(255), nullable=True, index=True)
+    status = Column(String(20), server_default="active")  # active | completed | failed
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+    end_reason = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PhoneNumberRoute(Base):
+    """
+    Maps an Exotel virtual phone number (the 'Called' field in callbacks) to
+    the tenant and agent that should handle calls on that number.
+    number is the primary key — one number belongs to exactly one route.
+    tenant_id stores str(Client.id), matching the representation used by Call.
+    """
+
+    __tablename__ = "phone_number_routes"
+
+    number = Column(String(20), primary_key=True)
+    tenant_id = Column(String(255), nullable=False)
+    agent_id = Column(String(255), nullable=False)
+    provider = Column(String(50), server_default="exotel")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
