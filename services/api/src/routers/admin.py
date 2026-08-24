@@ -617,7 +617,8 @@ async def list_tenants(
         stmt = stmt.where(Client.name.ilike(f"%{search}%"))
 
     total: int = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
-    rows = (await db.execute(stmt.offset((page - 1) * per_page).limit(per_page))).scalars().all()
+    rows_stmt = stmt.order_by(Client.id).offset((page - 1) * per_page).limit(per_page)
+    rows = (await db.execute(rows_stmt)).scalars().all()
 
     return PaginatedTenants(
         data=[_client_to_tenant(c) for c in rows],
