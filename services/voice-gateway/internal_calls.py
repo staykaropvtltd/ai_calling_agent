@@ -43,6 +43,10 @@ class InternalCallsClient:
                 async with httpx.AsyncClient(timeout=10) as client:
                     response = await client.post(self._base_url + path, json=payload)
             response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise InternalApiError(
+                f"Internal calls API request failed with status {exc.response.status_code}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise InternalApiError("Internal calls API request failed") from exc
 
