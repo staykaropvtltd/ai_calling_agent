@@ -1151,6 +1151,7 @@ async def test_tenant_routes_require_super_admin(
         r = await api_client.request(method, path, headers=user_headers, json={})
         assert r.status_code == 403, f"{method} {path} returned {r.status_code}"
 
+
 async def test_tenant_routes_require_bearer(api_client: AsyncClient):
     """All /admin/tenants routes must reject requests without a token."""
     r = await api_client.get("/admin/tenants")

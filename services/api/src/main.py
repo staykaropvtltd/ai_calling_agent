@@ -28,8 +28,9 @@ from src.config import (
     validate_startup_config,
 )
 from src.database import Base, engine, get_db
-from src.models import Caller, Client, User  # noqa: F401 — registers all models with Base
+from src.models import Call, Caller, Client, User  # noqa: F401 — registers all models with Base
 from src.routers.admin import router as admin_router
+from src.routers.internal import router as internal_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,6 +56,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Staykaro API", version="0.3.0", lifespan=lifespan)
 app.include_router(admin_router)
+app.include_router(internal_router)
 
 # ── Request logging middleware ─────────────────────────────────────────────────
 

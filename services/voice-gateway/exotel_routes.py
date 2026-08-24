@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from internal_calls import CallCreation, CallFinalization, InternalApiError, InternalCalls
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from packages.providers.telephony import ExotelSettings
 
@@ -47,7 +47,6 @@ def build_exotel_router(
 
     @router.post("/callback")
     async def callback(
-        payload: ExotelCallback,
         request: Request,
         x_exotel_webhook_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, str]:
@@ -58,6 +57,27 @@ def build_exotel_router(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="invalid Exotel callback authentication",
             )
+
+        content_type = request.headers.get("content-type", "")
+        if "application/x-www-form-urlencoded" in content_type:
+            form_data = await request.form()
+            raw: dict = dict(form_data)
+        else:
+            try:
+                raw = await request.json()
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Request body must be JSON or form-encoded",
+                ) from exc
+
+        try:
+            payload = ExotelCallback.model_validate(raw)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
 
         key = (payload.provider_call_id, payload.event.lower())
         if key in handled_events:
@@ -91,6 +111,7 @@ def build_exotel_router(
                         tenant_id=tenant_id,
                         agent_id=agent_id,
                         started_at=datetime.now(UTC),
+                        provider_call_id=payload.provider_call_id,
                     )
                 )
             except InternalApiError as exc:
