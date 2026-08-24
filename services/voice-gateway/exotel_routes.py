@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Protocol
 from uuid import uuid4
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, status
 from internal_calls import CallCreation, CallFinalization, InternalApiError, InternalCalls
 from pydantic import BaseModel, Field, model_validator
 
