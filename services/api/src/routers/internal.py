@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,12 +16,29 @@ from src.models import Call
 
 logger = logging.getLogger("staykaro.internal")
 
-router = APIRouter(prefix="/internal/v1", tags=["internal"])
+_INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "").strip()
+
+
+def _require_internal_token(
+    x_internal_token: Annotated[str | None, Header(alias="X-Internal-Token")] = None,
+) -> None:
+    if _INTERNAL_API_TOKEN and (
+        not x_internal_token or x_internal_token != _INTERNAL_API_TOKEN
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid internal API token",
+        )
+
+
+router = APIRouter(
+    prefix="/internal/v1",
+    tags=["internal"],
+    dependencies=[Depends(_require_internal_token)],
+)
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
-
-
 class CallCreateRequest(BaseModel):
     call_id: str
     tenant_id: str
