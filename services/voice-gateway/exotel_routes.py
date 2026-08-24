@@ -126,6 +126,10 @@ def build_exotel_router(
             if session is not None:
                 session_manager.end(call_id)
                 session_manager.remove(call_id)
+            provider_calls.pop(payload.provider_call_id, None)
+            handled_events.difference_update(
+                {k for k in handled_events if k[0] == payload.provider_call_id}
+            )
             return {"status": "session_cleaned", "call_id": call_id}
 
         return {"status": "ignored", "call_id": ""}
