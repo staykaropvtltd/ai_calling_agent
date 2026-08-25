@@ -86,6 +86,8 @@ def build_exotel_router(
                 "status": "duplicate",
                 "call_id": provider_calls.get(payload.provider_call_id, ""),
             }
+        handled_events.add(key)
+
         if payload.event.lower() in {"connected", "start", "answered", "started"}:
             if routing is None:
                 raise HTTPException(

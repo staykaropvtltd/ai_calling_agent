@@ -22,9 +22,7 @@ _INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "").strip()
 def _require_internal_token(
     x_internal_token: Annotated[str | None, Header(alias="X-Internal-Token")] = None,
 ) -> None:
-    if _INTERNAL_API_TOKEN and (
-        not x_internal_token or x_internal_token != _INTERNAL_API_TOKEN
-    ):
+    if _INTERNAL_API_TOKEN and (not x_internal_token or x_internal_token != _INTERNAL_API_TOKEN):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid internal API token",
