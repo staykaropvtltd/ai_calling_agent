@@ -46,6 +46,7 @@ class ExotelProvider:
                     auth=(self._settings.api_key, self._settings.api_secret),
                     timeout=self._settings.timeout_seconds,
                 )
+            response.raise_for_status()
             body: dict[str, Any] = response.json()
         except httpx.TimeoutException as exc:
             raise ProviderError("Exotel request timed out") from exc
