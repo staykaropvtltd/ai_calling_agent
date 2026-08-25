@@ -122,15 +122,25 @@ class UserUpdate(BaseModel):
 
 
 class UserResponse(BaseModel):
-    id: str
+    user_id: str
     email: str
     full_name: str
-    role: Optional[str]
-    tenant_id: Optional[int]
-    status: Optional[str]
-    created_at: Optional[datetime]
+    role: Optional[str] = None
+    tenant_id: Optional[str] = None
+    status: Optional[str] = None
+    created_at: Optional[datetime] = None
 
-    model_config = {"from_attributes": True}
+
+def _user_to_response(user: User) -> UserResponse:
+    return UserResponse(
+        user_id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        role=user.role,
+        tenant_id=str(user.tenant_id) if user.tenant_id is not None else None,
+        status=user.status,
+        created_at=user.created_at,
+    )
 
 
 class PaginatedUsers(BaseModel):
@@ -339,7 +349,7 @@ async def create_user(
     body: UserCreate,
     db: AsyncSession = Depends(get_db),
     _user: dict = Depends(_require_super_admin),
-) -> User:
+) -> UserResponse:
     if body.role not in VALID_USER_ROLES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -361,7 +371,7 @@ async def create_user(
     await db.commit()
     await db.refresh(user)
     logger.info("User created: id=%s email=%s role=%s", user.id, user.email, user.role)
-    return user
+    return _user_to_response(user)
 
 
 @router.get("/users", response_model=PaginatedUsers)
@@ -400,7 +410,7 @@ async def list_users(
     rows = (await db.execute(stmt.offset((page - 1) * per_page).limit(per_page))).scalars().all()
 
     return PaginatedUsers(
-        data=list(rows),
+        data=[_user_to_response(u) for u in rows],
         total=total,
         page=page,
         per_page=per_page,
@@ -413,14 +423,14 @@ async def get_user(
     user_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(_require_admin),
-) -> User:
+) -> UserResponse:
     fetched = await db.get(User, user_id)
     if not fetched:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     # tenant_admin may only view users belonging to their own tenant.
     if user.get("role") == "tenant_admin" and fetched.tenant_id != user.get("client_id"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    return fetched
+    return _user_to_response(fetched)
 
 
 @router.put("/users/{user_id}", response_model=UserResponse)
@@ -429,7 +439,7 @@ async def update_user(
     body: UserUpdate,
     db: AsyncSession = Depends(get_db),
     _user: dict = Depends(_require_super_admin),
-) -> User:
+) -> UserResponse:
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -450,7 +460,7 @@ async def update_user(
         setattr(user, field, value)
     await db.commit()
     await db.refresh(user)
-    return user
+    return _user_to_response(user)
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
