@@ -53,9 +53,7 @@ class ExotelSettings:
         missing = [name for field, name in names.items() if not values[field]]
         if missing:
             raise ProviderError("Missing required Exotel configuration: " + ", ".join(missing))
-        timeout_raw = os.getenv("EXOTEL_TIMEOUT_SECONDS", "10").strip()
-        try:
-            timeout_seconds = float(timeout_raw)
-        except ValueError as exc:
-            raise ProviderError(f"Invalid EXOTEL_TIMEOUT_SECONDS: {timeout_raw!r}") from exc
-        return cls(**values, timeout_seconds=timeout_seconds)
+        return cls(
+            **values,
+            timeout_seconds=float(os.getenv("EXOTEL_TIMEOUT_SECONDS", "10")),
+        )

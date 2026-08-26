@@ -219,6 +219,20 @@ services:
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
 
+      # Exotel callback integration (SH-01/SH-02)
+      EXOTEL_API_KEY: ${EXOTEL_API_KEY:-}
+      EXOTEL_API_SECRET: ${EXOTEL_API_SECRET:-}
+      EXOTEL_SID: ${EXOTEL_SID:-}
+      EXOTEL_SUBDOMAIN: ${EXOTEL_SUBDOMAIN:-}
+      EXOTEL_CALLER_ID: ${EXOTEL_CALLER_ID:-}
+      EXOTEL_WEBHOOK_TOKEN: ${EXOTEL_WEBHOOK_TOKEN:-}
+
+      # Base URL for the internal calls API (services/api)
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:8000}
+
+      # Set to "true" to enable the dev-only test routing stub (one phone number only)
+      EXOTEL_DEV_ROUTING: ${EXOTEL_DEV_ROUTING:-}
+
       ENVIRONMENT: ${ENVIRONMENT:-development}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
 
