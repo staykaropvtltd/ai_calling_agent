@@ -92,4 +92,4 @@ infrastructure/monitoring/grafana-data/
 *.sqlite
 *.sqlite3
 *.db-*
-*.sqlite-*
+*.sqlite-*.pdf
