@@ -89,3 +89,45 @@ class InternalCallsClient:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise InternalApiError("Internal calls API request failed") from exc
+
+
+# ── Phone number routing ──────────────────────────────────────────────────────
+
+
+class PhoneRoute(BaseModel):
+    tenant_id: str
+    agent_id: str
+    provider: str
+
+
+class InternalPhoneRoutingClient:
+    """Resolves a dialed phone number to a (tenant_id, agent_id) pair via
+    GET /internal/v1/phone-routes/{number}.  Follows the same HTTP/error
+    conventions as InternalCallsClient."""
+
+    def __init__(self, base_url: str, client: httpx.AsyncClient | None = None) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._client = client
+
+    async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        url = self._base_url + path
+        try:
+            if self._client is not None:
+                response = await self._client.request(method, url, **kwargs)
+            else:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    response = await client.request(method, url, **kwargs)
+            return response
+        except httpx.HTTPError as exc:
+            raise InternalApiError("Internal phone routing API request failed") from exc
+
+    async def resolve(self, dialed_number: str) -> tuple[str, str]:
+        response = await self._request("GET", f"/internal/v1/phone-routes/{dialed_number}")
+        if response.status_code == 404:
+            raise InternalApiError("Phone number route not found")
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise InternalApiError("Internal phone routing API request failed") from exc
+        route = PhoneRoute.model_validate(response.json())
+        return route.tenant_id, route.agent_id

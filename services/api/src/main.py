@@ -28,7 +28,13 @@ from src.config import (
     validate_startup_config,
 )
 from src.database import Base, engine, get_db
-from src.models import Call, Caller, Client, User  # noqa: F401 — registers all models with Base
+from src.models import (  # noqa: F401 — registers all models with Base
+    Call,
+    Caller,
+    Client,
+    PhoneNumberRoute,
+    User,
+)
 from src.routers.admin import router as admin_router
 from src.routers.internal import router as internal_router
 

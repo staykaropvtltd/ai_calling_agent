@@ -3,40 +3,24 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime
-from typing import Annotated, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
-from src.models import Call
+from src.models import Call, PhoneNumberRoute
 
 logger = logging.getLogger("staykaro.internal")
 
-_INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "").strip()
-
-
-def _require_internal_token(
-    x_internal_token: Annotated[str | None, Header(alias="X-Internal-Token")] = None,
-) -> None:
-    if _INTERNAL_API_TOKEN and (not x_internal_token or x_internal_token != _INTERNAL_API_TOKEN):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid internal API token",
-        )
-
-
-router = APIRouter(
-    prefix="/internal/v1",
-    tags=["internal"],
-    dependencies=[Depends(_require_internal_token)],
-)
+router = APIRouter(prefix="/internal/v1", tags=["internal"])
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
+
+
 class CallCreateRequest(BaseModel):
     call_id: str
     tenant_id: str
@@ -78,6 +62,12 @@ class FinalizeResponse(BaseModel):
     status: str
     ended_at: datetime
     end_reason: str
+
+
+class PhoneRouteResponse(BaseModel):
+    tenant_id: str
+    agent_id: str
+    provider: str
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -155,4 +145,21 @@ async def finalize_call(
         status=call.status,
         ended_at=call.ended_at,
         end_reason=call.end_reason,
+    )
+
+
+@router.get("/phone-routes/{number}", response_model=PhoneRouteResponse)
+async def get_phone_route(
+    number: str,
+    db: AsyncSession = Depends(get_db),
+) -> PhoneRouteResponse:
+    route = await db.get(PhoneNumberRoute, number)
+    if route is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Phone number route not found"
+        )
+    return PhoneRouteResponse(
+        tenant_id=route.tenant_id,
+        agent_id=route.agent_id,
+        provider=route.provider or "exotel",
     )

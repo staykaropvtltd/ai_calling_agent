@@ -94,3 +94,20 @@ class Call(Base):
     ended_at = Column(DateTime(timezone=True), nullable=True)
     end_reason = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PhoneNumberRoute(Base):
+    """
+    Maps an Exotel virtual phone number (the 'Called' field in callbacks) to
+    the tenant and agent that should handle calls on that number.
+    number is the primary key — one number belongs to exactly one route.
+    tenant_id stores str(Client.id), matching the representation used by Call.
+    """
+
+    __tablename__ = "phone_number_routes"
+
+    number = Column(String(20), primary_key=True)
+    tenant_id = Column(String(255), nullable=False)
+    agent_id = Column(String(255), nullable=False)
+    provider = Column(String(50), server_default="exotel")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

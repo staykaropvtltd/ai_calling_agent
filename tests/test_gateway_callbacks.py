@@ -1,5 +1,5 @@
 """
-SH-03 gateway wiring — Exotel callback integration tests.
+SH-03 / SH-04 gateway wiring — Exotel callback integration tests.
 
 Covers all required scenarios:
   - Router registration
@@ -11,10 +11,14 @@ Covers all required scenarios:
   - Call finalization
   - Session create / end / remove lifecycle
   - Failure responses (no routing, bad payload)
+  - CallStore persistence: set on start, get on end, delete after finalization
+  - Simulated gateway restart: router B finalizes a call started by router A
+  - _RedisCallStore unit tests via _FakeRedis
 """
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -27,6 +31,65 @@ if _VG not in sys.path:
     sys.path.insert(0, _VG)
 
 from exotel_routes import build_exotel_router  # noqa: E402
+
+# services/api/tests/conftest.py imports `from src.main import app` during collection,
+# placing services/api/src/main into sys.modules under the name "src.main".  A direct
+# `from src.main import _RedisCallStore` would therefore resolve to the wrong module.
+# Load the gateway's src/main.py explicitly under a private module name to avoid that.
+_gw_main_path = Path(_VG) / "src" / "main.py"
+_gw_spec = importlib.util.spec_from_file_location("_voice_gateway_main", str(_gw_main_path))
+_GW_MAIN = importlib.util.module_from_spec(_gw_spec)
+# Register before exec_module so that @dataclass can resolve the module's __dict__.
+sys.modules["_voice_gateway_main"] = _GW_MAIN
+_gw_spec.loader.exec_module(_GW_MAIN)  # type: ignore[union-attr]
+
+# ── CallStore test helpers ────────────────────────────────────────────────────
+
+
+class _FakeCallStore:
+    """Shared in-memory CallStore for testing persistent store behavior.
+
+    Instances are shared across router instances to simulate a real external
+    store (e.g. Redis) that survives process restarts.
+    """
+
+    def __init__(self) -> None:
+        self._store: dict[str, str] = {}
+
+    def set(self, provider_call_id: str, call_id: str) -> None:
+        self._store[provider_call_id] = call_id
+
+    def get(self, provider_call_id: str) -> str | None:
+        return self._store.get(provider_call_id)
+
+    def delete(self, provider_call_id: str) -> None:
+        self._store.pop(provider_call_id, None)
+
+
+class _FakeRedis:
+    """Minimal Redis substitute for testing _RedisCallStore without a real server.
+
+    Only implements the operations used by _RedisCallStore: set (with optional
+    ex TTL — ignored here), get, and delete (variadic).
+    """
+
+    def __init__(self) -> None:
+        self._data: dict[str, str] = {}
+
+    def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self._data[key] = value
+
+    def get(self, key: str) -> str | None:
+        return self._data.get(key)
+
+    def delete(self, *keys: str) -> int:
+        deleted = 0
+        for k in keys:
+            if k in self._data:
+                del self._data[k]
+                deleted += 1
+        return deleted
+
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -77,11 +140,13 @@ class _Routing:
         return ("tenant-1", "agent-1")
 
 
-def _make_client(*, calls: _Calls | None = None, routing=None):
+def _make_client(*, calls: _Calls | None = None, routing=None, call_store=None):
     calls = calls or _Calls()
     sessions = _Sessions()
     fastapi_app = FastAPI()
-    fastapi_app.include_router(build_exotel_router(sessions, _Settings(), calls, routing))
+    fastapi_app.include_router(
+        build_exotel_router(sessions, _Settings(), calls, routing, call_store)
+    )
     return TestClient(fastapi_app), sessions, calls
 
 
@@ -427,3 +492,208 @@ def test_end_event_without_prior_start_returns_ignored():
     )
     assert r.status_code == 200
     assert r.json()["status"] == "ignored"
+
+
+# ── 9. CallStore persistence ──────────────────────────────────────────────────
+
+
+def test_call_store_set_on_start_event():
+    """Start event writes provider_call_id → call_id into the call store."""
+    store = _FakeCallStore()
+    calls = _Calls()
+    client, _, _ = _make_client(calls=calls, routing=_Routing(), call_store=store)
+
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-ps-1", "EventType": "answered", "Called": "+919"},
+    )
+    assert r.status_code == 200
+    call_id = r.json()["call_id"]
+    assert store.get("exo-ps-1") == call_id
+
+
+def test_persistent_store_survives_router_restart():
+    """Simulate gateway restart: router A handles the start, router B handles the end.
+
+    Router B has an empty in-memory state but shares the same persistent store as A.
+    The end event must finalize — NOT return {"status": "ignored"}.
+    """
+    store = _FakeCallStore()
+
+    # Router A: receives the start event and writes to the shared store
+    calls_a = _Calls()
+    client_a, _, _ = _make_client(calls=calls_a, routing=_Routing(), call_store=store)
+    start = client_a.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-restart", "EventType": "answered", "Called": "+919"},
+    )
+    assert start.status_code == 200
+    call_id = start.json()["call_id"]
+    assert store.get("exo-restart") == call_id  # mapping persisted
+
+    # Router B: fresh instance (no in-memory provider_calls), same persistent store
+    calls_b = _Calls()
+    client_b, _, _ = _make_client(calls=calls_b, routing=_Routing(), call_store=store)
+    end = client_b.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-restart", "EventType": "completed"},
+    )
+    assert end.status_code == 200
+    assert end.json()["status"] == "session_cleaned"
+    assert calls_b.finalized is not None
+    assert calls_b.finalized[0] == call_id
+    assert calls_b.finalized[1].end_reason == "caller_hangup"
+
+
+def test_call_store_deleted_after_finalization():
+    """Mapping is removed from the store only after successful finalization."""
+    store = _FakeCallStore()
+    client, _, _ = _make_client(routing=_Routing(), call_store=store)
+
+    client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-del", "EventType": "answered", "Called": "+919"},
+    )
+    assert store.get("exo-del") is not None
+
+    end = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-del", "EventType": "completed"},
+    )
+    assert end.json()["status"] == "session_cleaned"
+    assert store.get("exo-del") is None
+
+
+def test_call_store_not_deleted_when_finalization_fails():
+    """If finalization raises InternalApiError the mapping is preserved for retry."""
+    from internal_calls import InternalApiError
+
+    class _FailingCalls:
+        async def create(self, call) -> None:
+            pass
+
+        async def get(self, call_id: str):
+            return None
+
+        async def finalize(self, call_id: str, finalization) -> None:
+            raise InternalApiError("downstream API unavailable")
+
+    store = _FakeCallStore()
+    client, _, _ = _make_client(calls=_FailingCalls(), routing=_Routing(), call_store=store)
+
+    client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-nodel", "EventType": "answered", "Called": "+919"},
+    )
+    assert store.get("exo-nodel") is not None  # mapping stored
+
+    end = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-nodel", "EventType": "completed"},
+    )
+    assert end.status_code == 503
+    # Mapping preserved — not deleted — so the end event can be retried
+    assert store.get("exo-nodel") is not None
+
+
+def test_call_store_none_uses_in_memory_fallback():
+    """call_store=None falls back to an in-memory dict (backward compatibility)."""
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing(), call_store=None)
+
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-compat", "EventType": "answered", "Called": "+919"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "session_started"
+    call_id = r.json()["call_id"]
+
+    end = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-compat", "EventType": "completed"},
+    )
+    assert end.json()["status"] == "session_cleaned"
+    assert end.json()["call_id"] == call_id
+
+
+def test_duplicate_callback_still_works_with_call_store():
+    """Duplicate dedup returns the stored call_id even when using a persistent store."""
+    store = _FakeCallStore()
+    calls = _Calls()
+    client, _, _ = _make_client(calls=calls, routing=_Routing(), call_store=store)
+
+    first = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-dup-ps", "EventType": "answered", "Called": "+919"},
+    )
+    assert first.json()["status"] == "session_started"
+    call_id = first.json()["call_id"]
+
+    second = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-dup-ps", "EventType": "answered", "Called": "+919"},
+    )
+    assert second.json()["status"] == "duplicate"
+    assert second.json()["call_id"] == call_id
+
+
+# ── 10. _RedisCallStore unit tests ────────────────────────────────────────────
+
+
+def test_redis_call_store_set_get_delete():
+    """Basic set / get / delete round-trip via _FakeRedis."""
+    store = _GW_MAIN._RedisCallStore(_FakeRedis())
+
+    store.set("exo-r1", "call-uuid-1")
+    assert store.get("exo-r1") == "call-uuid-1"
+
+    store.delete("exo-r1")
+    assert store.get("exo-r1") is None
+
+
+def test_redis_call_store_uses_namespaced_key():
+    """Keys stored in Redis are prefixed with voice_gateway:provider_call:"""
+    r = _FakeRedis()
+    store = _GW_MAIN._RedisCallStore(r)
+    store.set("exo-ns", "call-uuid-ns")
+
+    keys = list(r._data.keys())
+    assert len(keys) == 1
+    assert keys[0] == "voice_gateway:provider_call:exo-ns"
+
+
+def test_redis_call_store_get_missing_returns_none():
+    store = _GW_MAIN._RedisCallStore(_FakeRedis())
+    assert store.get("does-not-exist") is None
+
+
+def test_redis_call_store_redis_error_is_handled_gracefully():
+    """RedisError in get / set / delete does not propagate to the caller."""
+    import redis as _redis_pkg
+
+    class _ErrorRedis:
+        def set(self, key, value, **kwargs):
+            raise _redis_pkg.RedisError("connection refused")
+
+        def get(self, key):
+            raise _redis_pkg.RedisError("connection refused")
+
+        def delete(self, *keys):
+            raise _redis_pkg.RedisError("connection refused")
+
+    store = _GW_MAIN._RedisCallStore(_ErrorRedis())
+    assert store.get("x") is None  # does not raise
+    store.set("x", "y")  # does not raise (warning logged)
+    store.delete("x")  # does not raise
