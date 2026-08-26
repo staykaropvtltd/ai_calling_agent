@@ -1,0 +1,743 @@
+"""
+SH-03 / SH-04 gateway wiring — Exotel callback integration tests.
+
+Covers all required scenarios:
+  - Router registration
+  - JSON and form-urlencoded callbacks
+  - Valid / missing / wrong webhook authentication
+  - Call creation via internal API
+  - Duplicate callback deduplication
+  - Completion and provider-failure callbacks
+  - Call finalization
+  - Session create / end / remove lifecycle
+  - Failure responses (no routing, bad payload)
+  - CallStore persistence: set on start, get on end, delete after finalization
+  - Simulated gateway restart: router B finalizes a call started by router A
+  - _RedisCallStore unit tests via _FakeRedis
+  - Voice WebSocket endpoint (/ws/{call_id}) sharing the same session_manager
+    as the Exotel callback router — the CP1 "empty call lifecycle" path
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+# Make services/voice-gateway modules importable (exotel_routes, internal_calls, dev_routing).
+_VG = str((Path(__file__).parent.parent / "services" / "voice-gateway").resolve())
+if _VG not in sys.path:
+    sys.path.insert(0, _VG)
+
+from exotel_routes import build_exotel_router  # noqa: E402
+
+# services/api/tests/conftest.py imports `from src.main import app` during collection,
+# placing services/api/src/main into sys.modules under the name "src.main".  A direct
+# `from src.main import _RedisCallStore` would therefore resolve to the wrong module.
+# Load the gateway's src/main.py explicitly under a private module name to avoid that.
+_gw_main_path = Path(_VG) / "src" / "main.py"
+_gw_spec = importlib.util.spec_from_file_location("_voice_gateway_main", str(_gw_main_path))
+_GW_MAIN = importlib.util.module_from_spec(_gw_spec)
+# Register before exec_module so that @dataclass can resolve the module's __dict__.
+sys.modules["_voice_gateway_main"] = _GW_MAIN
+_gw_spec.loader.exec_module(_GW_MAIN)  # type: ignore[union-attr]
+
+# ── CallStore test helpers ────────────────────────────────────────────────────
+
+
+class _FakeCallStore:
+    """Shared in-memory CallStore for testing persistent store behavior.
+
+    Instances are shared across router instances to simulate a real external
+    store (e.g. Redis) that survives process restarts.
+    """
+
+    def __init__(self) -> None:
+        self._store: dict[str, str] = {}
+
+    def set(self, provider_call_id: str, call_id: str) -> None:
+        self._store[provider_call_id] = call_id
+
+    def get(self, provider_call_id: str) -> str | None:
+        return self._store.get(provider_call_id)
+
+    def delete(self, provider_call_id: str) -> None:
+        self._store.pop(provider_call_id, None)
+
+
+class _FakeRedis:
+    """Minimal Redis substitute for testing _RedisCallStore without a real server.
+
+    Only implements the operations used by _RedisCallStore: set (with optional
+    ex TTL — ignored here), get, and delete (variadic).
+    """
+
+    def __init__(self) -> None:
+        self._data: dict[str, str] = {}
+
+    def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self._data[key] = value
+
+    def get(self, key: str) -> str | None:
+        return self._data.get(key)
+
+    def delete(self, *keys: str) -> int:
+        deleted = 0
+        for k in keys:
+            if k in self._data:
+                del self._data[k]
+                deleted += 1
+        return deleted
+
+
+# ── Shared fixtures ───────────────────────────────────────────────────────────
+
+_TOKEN = "test-webhook-token"
+_AUTH_HDR = {"X-Exotel-Webhook-Token": _TOKEN}
+_FORM_HDR = {**_AUTH_HDR, "content-type": "application/x-www-form-urlencoded"}
+
+
+class _Settings:
+    webhook_token = _TOKEN
+
+
+class _Calls:
+    def __init__(self) -> None:
+        self.created = None
+        self.finalized = None
+
+    async def create(self, call) -> None:
+        self.created = call
+
+    async def get(self, call_id: str):
+        return None
+
+    async def finalize(self, call_id: str, finalization) -> None:
+        self.finalized = (call_id, finalization)
+
+
+class _Sessions:
+    def __init__(self) -> None:
+        self._store: dict = {}
+
+    def create(self, call_id: str, tenant_id: str, agent_id: str) -> None:
+        self._store[call_id] = {"tenant_id": tenant_id, "agent_id": agent_id, "status": "active"}
+
+    def get(self, call_id: str) -> dict | None:
+        return self._store.get(call_id)
+
+    def end(self, call_id: str) -> None:
+        if call_id in self._store:
+            self._store[call_id]["status"] = "ended"
+
+    def remove(self, call_id: str) -> None:
+        self._store.pop(call_id, None)
+
+
+class _Routing:
+    async def resolve(self, number: str) -> tuple[str, str]:
+        return ("tenant-1", "agent-1")
+
+
+def _make_client(*, calls: _Calls | None = None, routing=None, call_store=None):
+    calls = calls or _Calls()
+    sessions = _Sessions()
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(
+        build_exotel_router(sessions, _Settings(), calls, routing, call_store)
+    )
+    return TestClient(fastapi_app), sessions, calls
+
+
+# ── 1. Router registration ────────────────────────────────────────────────────
+
+
+def test_callback_route_is_registered():
+    """build_exotel_router places the callback endpoint at the expected path."""
+    client, _, _ = _make_client()
+    paths = {r.path for r in client.app.routes}
+    assert "/telephony/exotel/callback" in paths
+
+
+# ── 2. Webhook authentication ─────────────────────────────────────────────────
+
+
+def test_missing_auth_header_returns_401():
+    client, _, _ = _make_client(routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        json={"CallSid": "c1", "EventType": "connected", "Called": "+919"},
+    )
+    assert r.status_code == 401
+
+
+def test_wrong_auth_token_returns_401():
+    client, _, _ = _make_client(routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers={"X-Exotel-Webhook-Token": "wrong-token"},
+        json={"CallSid": "c1", "EventType": "connected", "Called": "+919"},
+    )
+    assert r.status_code == 401
+
+
+def test_valid_auth_token_is_accepted_json():
+    calls = _Calls()
+    client, _, _ = _make_client(calls=calls, routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "c1", "EventType": "connected", "Called": "+919"},
+    )
+    assert r.status_code == 200
+    assert calls.created is not None
+
+
+def test_valid_auth_token_is_accepted_form():
+    calls = _Calls()
+    client, _, _ = _make_client(calls=calls, routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_FORM_HDR,
+        data={"CallSid": "c1", "EventType": "connected", "Called": "+919"},
+    )
+    assert r.status_code == 200
+    assert calls.created is not None
+
+
+# ── 3. JSON callback — start events ──────────────────────────────────────────
+
+
+def test_json_start_creates_call_and_session():
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-j-1", "EventType": "answered", "Called": "+919"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "session_started"
+    call_id = body["call_id"]
+    assert calls.created.call_id == call_id
+    assert calls.created.provider_call_id == "exo-j-1"
+    assert calls.created.tenant_id == "tenant-1"
+    assert calls.created.agent_id == "agent-1"
+    assert sessions.get(call_id) is not None
+
+
+def test_json_start_no_routing_returns_503():
+    client, _, _ = _make_client(routing=None)
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "c1", "EventType": "connected", "Called": "+919"},
+    )
+    assert r.status_code == 503
+
+
+def test_json_start_missing_called_returns_422():
+    client, _, _ = _make_client(routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "c1", "EventType": "connected"},
+    )
+    assert r.status_code == 422
+
+
+def test_json_missing_call_sid_returns_422():
+    client, _, _ = _make_client(routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"EventType": "connected", "Called": "+919"},
+    )
+    assert r.status_code == 422
+
+
+# ── 4. Form-urlencoded callback — start events ────────────────────────────────
+
+
+def test_form_start_creates_call_and_session():
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_FORM_HDR,
+        data={"CallSid": "exo-f-1", "EventType": "answered", "Called": "+919"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "session_started"
+    call_id = body["call_id"]
+    assert calls.created.call_id == call_id
+    assert calls.created.provider_call_id == "exo-f-1"
+    assert sessions.get(call_id) is not None
+
+
+def test_form_missing_auth_returns_401():
+    client, _, _ = _make_client(routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers={"content-type": "application/x-www-form-urlencoded"},
+        data={"CallSid": "c1", "EventType": "answered", "Called": "+919"},
+    )
+    assert r.status_code == 401
+
+
+def test_form_missing_call_sid_returns_422():
+    client, _, _ = _make_client(routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_FORM_HDR,
+        data={"EventType": "answered", "Called": "+919"},
+    )
+    assert r.status_code == 422
+
+
+def test_form_missing_called_returns_422():
+    client, _, _ = _make_client(routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_FORM_HDR,
+        data={"CallSid": "c1", "EventType": "answered"},
+    )
+    assert r.status_code == 422
+
+
+# ── 5. Completion callbacks ───────────────────────────────────────────────────
+
+
+def test_json_completion_finalizes_and_cleans_session():
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing())
+
+    start = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-j-fin", "EventType": "answered", "Called": "+919"},
+    )
+    call_id = start.json()["call_id"]
+
+    end = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-j-fin", "EventType": "completed"},
+    )
+    assert end.status_code == 200
+    assert end.json()["status"] == "session_cleaned"
+    assert calls.finalized is not None
+    assert calls.finalized[0] == call_id
+    assert calls.finalized[1].end_reason == "caller_hangup"
+    assert sessions.get(call_id) is None  # removed, not just ended
+
+
+def test_form_completion_finalizes_and_cleans_session():
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing())
+
+    start = client.post(
+        "/telephony/exotel/callback",
+        headers=_FORM_HDR,
+        data={"CallSid": "exo-f-fin", "EventType": "started", "Called": "+919"},
+    )
+    call_id = start.json()["call_id"]
+
+    end = client.post(
+        "/telephony/exotel/callback",
+        headers=_FORM_HDR,
+        data={"CallSid": "exo-f-fin", "EventType": "completed"},
+    )
+    assert end.status_code == 200
+    assert end.json()["status"] == "session_cleaned"
+    assert calls.finalized[1].end_reason == "caller_hangup"
+    assert sessions.get(call_id) is None
+
+
+def test_provider_failure_event_maps_to_failed_reason():
+    calls = _Calls()
+    client, _, _ = _make_client(calls=calls, routing=_Routing())
+
+    start = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-fail", "EventType": "answered", "Called": "+919"},
+    )
+    call_id = start.json()["call_id"]
+
+    end = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-fail", "EventType": "failed"},
+    )
+    assert end.status_code == 200
+    assert calls.finalized[0] == call_id
+    assert calls.finalized[1].end_reason == "provider_failure"
+
+
+def test_disconnected_event_maps_to_hangup_reason():
+    calls = _Calls()
+    client, _, _ = _make_client(calls=calls, routing=_Routing())
+
+    client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-disc", "EventType": "answered", "Called": "+919"},
+    )
+
+    end = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-disc", "EventType": "disconnected"},
+    )
+    assert end.status_code == 200
+    assert calls.finalized[1].end_reason == "caller_hangup"
+
+
+# ── 6. Duplicate callback deduplication ──────────────────────────────────────
+
+
+def test_duplicate_start_event_is_ignored():
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing())
+
+    first = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-dup", "EventType": "answered", "Called": "+919"},
+    )
+    assert first.json()["status"] == "session_started"
+    call_id = first.json()["call_id"]
+
+    second = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-dup", "EventType": "answered", "Called": "+919"},
+    )
+    assert second.json()["status"] == "duplicate"
+    assert second.json()["call_id"] == call_id
+
+
+def test_duplicate_json_and_form_events_share_dedup_state():
+    """JSON and form-encoded callbacks for the same (call_sid, event) are deduplicated."""
+    calls = _Calls()
+    client, _, _ = _make_client(calls=calls, routing=_Routing())
+
+    # JSON first
+    first = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-xfmt", "EventType": "start", "Called": "+919"},
+    )
+    call_id = first.json()["call_id"]
+
+    # Form-encoded duplicate of same event
+    second = client.post(
+        "/telephony/exotel/callback",
+        headers=_FORM_HDR,
+        data={"CallSid": "exo-xfmt", "EventType": "start", "Called": "+919"},
+    )
+    assert second.json()["status"] == "duplicate"
+    assert second.json()["call_id"] == call_id
+
+
+# ── 7. Session lifecycle ──────────────────────────────────────────────────────
+
+
+def test_session_create_end_remove_lifecycle():
+    """Session is created on start, fully removed (not merely marked ended) on completion."""
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing())
+
+    start = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-lc", "EventType": "start", "Called": "+919"},
+    )
+    call_id = start.json()["call_id"]
+    assert sessions.get(call_id) is not None  # created
+
+    client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-lc", "EventType": "completed"},
+    )
+    assert sessions.get(call_id) is None  # removed
+
+
+# ── 8. Unknown events are ignored ─────────────────────────────────────────────
+
+
+def test_unknown_event_returns_ignored():
+    client, _, _ = _make_client(routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "c1", "EventType": "ringing", "Called": "+919"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "ignored"
+
+
+def test_end_event_without_prior_start_returns_ignored():
+    """A completion event with no known call_id is silently ignored."""
+    client, _, _ = _make_client(routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "unknown-sid", "EventType": "completed"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "ignored"
+
+
+# ── 9. CallStore persistence ──────────────────────────────────────────────────
+
+
+def test_call_store_set_on_start_event():
+    """Start event writes provider_call_id → call_id into the call store."""
+    store = _FakeCallStore()
+    calls = _Calls()
+    client, _, _ = _make_client(calls=calls, routing=_Routing(), call_store=store)
+
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-ps-1", "EventType": "answered", "Called": "+919"},
+    )
+    assert r.status_code == 200
+    call_id = r.json()["call_id"]
+    assert store.get("exo-ps-1") == call_id
+
+
+def test_persistent_store_survives_router_restart():
+    """Simulate gateway restart: router A handles the start, router B handles the end.
+
+    Router B has an empty in-memory state but shares the same persistent store as A.
+    The end event must finalize — NOT return {"status": "ignored"}.
+    """
+    store = _FakeCallStore()
+
+    # Router A: receives the start event and writes to the shared store
+    calls_a = _Calls()
+    client_a, _, _ = _make_client(calls=calls_a, routing=_Routing(), call_store=store)
+    start = client_a.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-restart", "EventType": "answered", "Called": "+919"},
+    )
+    assert start.status_code == 200
+    call_id = start.json()["call_id"]
+    assert store.get("exo-restart") == call_id  # mapping persisted
+
+    # Router B: fresh instance (no in-memory provider_calls), same persistent store
+    calls_b = _Calls()
+    client_b, _, _ = _make_client(calls=calls_b, routing=_Routing(), call_store=store)
+    end = client_b.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-restart", "EventType": "completed"},
+    )
+    assert end.status_code == 200
+    assert end.json()["status"] == "session_cleaned"
+    assert calls_b.finalized is not None
+    assert calls_b.finalized[0] == call_id
+    assert calls_b.finalized[1].end_reason == "caller_hangup"
+
+
+def test_call_store_deleted_after_finalization():
+    """Mapping is removed from the store only after successful finalization."""
+    store = _FakeCallStore()
+    client, _, _ = _make_client(routing=_Routing(), call_store=store)
+
+    client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-del", "EventType": "answered", "Called": "+919"},
+    )
+    assert store.get("exo-del") is not None
+
+    end = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-del", "EventType": "completed"},
+    )
+    assert end.json()["status"] == "session_cleaned"
+    assert store.get("exo-del") is None
+
+
+def test_call_store_not_deleted_when_finalization_fails():
+    """If finalization raises InternalApiError the mapping is preserved for retry."""
+    from internal_calls import InternalApiError
+
+    class _FailingCalls:
+        async def create(self, call) -> None:
+            pass
+
+        async def get(self, call_id: str):
+            return None
+
+        async def finalize(self, call_id: str, finalization) -> None:
+            raise InternalApiError("downstream API unavailable")
+
+    store = _FakeCallStore()
+    client, _, _ = _make_client(calls=_FailingCalls(), routing=_Routing(), call_store=store)
+
+    client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-nodel", "EventType": "answered", "Called": "+919"},
+    )
+    assert store.get("exo-nodel") is not None  # mapping stored
+
+    end = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-nodel", "EventType": "completed"},
+    )
+    assert end.status_code == 503
+    # Mapping preserved — not deleted — so the end event can be retried
+    assert store.get("exo-nodel") is not None
+
+
+def test_call_store_none_uses_in_memory_fallback():
+    """call_store=None falls back to an in-memory dict (backward compatibility)."""
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing(), call_store=None)
+
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-compat", "EventType": "answered", "Called": "+919"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "session_started"
+    call_id = r.json()["call_id"]
+
+    end = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-compat", "EventType": "completed"},
+    )
+    assert end.json()["status"] == "session_cleaned"
+    assert end.json()["call_id"] == call_id
+
+
+def test_duplicate_callback_still_works_with_call_store():
+    """Duplicate dedup returns the stored call_id even when using a persistent store."""
+    store = _FakeCallStore()
+    calls = _Calls()
+    client, _, _ = _make_client(calls=calls, routing=_Routing(), call_store=store)
+
+    first = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-dup-ps", "EventType": "answered", "Called": "+919"},
+    )
+    assert first.json()["status"] == "session_started"
+    call_id = first.json()["call_id"]
+
+    second = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-dup-ps", "EventType": "answered", "Called": "+919"},
+    )
+    assert second.json()["status"] == "duplicate"
+    assert second.json()["call_id"] == call_id
+
+
+# ── 10. _RedisCallStore unit tests ────────────────────────────────────────────
+
+
+def test_redis_call_store_set_get_delete():
+    """Basic set / get / delete round-trip via _FakeRedis."""
+    store = _GW_MAIN._RedisCallStore(_FakeRedis())
+
+    store.set("exo-r1", "call-uuid-1")
+    assert store.get("exo-r1") == "call-uuid-1"
+
+    store.delete("exo-r1")
+    assert store.get("exo-r1") is None
+
+
+def test_redis_call_store_uses_namespaced_key():
+    """Keys stored in Redis are prefixed with voice_gateway:provider_call:"""
+    r = _FakeRedis()
+    store = _GW_MAIN._RedisCallStore(r)
+    store.set("exo-ns", "call-uuid-ns")
+
+    keys = list(r._data.keys())
+    assert len(keys) == 1
+    assert keys[0] == "voice_gateway:provider_call:exo-ns"
+
+
+def test_redis_call_store_get_missing_returns_none():
+    store = _GW_MAIN._RedisCallStore(_FakeRedis())
+    assert store.get("does-not-exist") is None
+
+
+def test_redis_call_store_redis_error_is_handled_gracefully():
+    """RedisError in get / set / delete does not propagate to the caller."""
+    import redis as _redis_pkg
+
+    class _ErrorRedis:
+        def set(self, key, value, **kwargs):
+            raise _redis_pkg.RedisError("connection refused")
+
+        def get(self, key):
+            raise _redis_pkg.RedisError("connection refused")
+
+        def delete(self, *keys):
+            raise _redis_pkg.RedisError("connection refused")
+
+    store = _GW_MAIN._RedisCallStore(_ErrorRedis())
+    assert store.get("x") is None  # does not raise
+    store.set("x", "y")  # does not raise (warning logged)
+    store.delete("x")  # does not raise
+
+
+# ── 9. Voice WebSocket endpoint (SH-03) ─────────────────────────────────────────
+# Exercises the real production app (_GW_MAIN.app), not an isolated router —
+# this is what proves the WebSocket handler and the Exotel callback router
+# actually share one session_manager instance.
+
+
+def test_voice_websocket_route_is_registered():
+    client = TestClient(_GW_MAIN.app)
+    with client.websocket_connect("/ws/test-ws-route"):
+        pass
+
+
+def test_voice_websocket_creates_and_removes_session():
+    """Connecting to /ws/{call_id} creates a session; disconnecting removes it."""
+    client = TestClient(_GW_MAIN.app)
+    call_id = "test-ws-lifecycle"
+
+    with client.websocket_connect(f"/ws/{call_id}"):
+        session = _GW_MAIN.session_manager.get(call_id)
+        assert session is not None
+        assert session["call_id"] == call_id
+        assert session["status"] == "active"
+
+    assert _GW_MAIN.session_manager.get(call_id) is None
+
+
+def test_voice_websocket_reuses_session_created_by_callback():
+    """A session already created via the Exotel callback path (tenant/agent
+    resolved) is the same one the WebSocket handler sees and cleans up —
+    proving the shared session_manager wiring, not two divergent stores."""
+    call_id = "test-ws-reuse"
+    _GW_MAIN.session_manager.create(call_id, tenant_id="acme", agent_id="agent-1")
+
+    client = TestClient(_GW_MAIN.app)
+    with client.websocket_connect(f"/ws/{call_id}"):
+        session = _GW_MAIN.session_manager.get(call_id)
+        assert session["tenant_id"] == "acme"
+        assert session["agent_id"] == "agent-1"
+
+    assert _GW_MAIN.session_manager.get(call_id) is None

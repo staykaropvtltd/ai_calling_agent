@@ -1,0 +1,16 @@
+# ============================================================
+# Staykaro AI Caller — Development Compose Overrides
+#
+# Docker Compose automatically merges this file when you run
+# `docker compose up` (no -f flags). It is NOT loaded when
+# the prod stack is started with explicit -f flags.
+#
+# Purpose: bind nginx to 127.0.0.1:80 in dev so the gateway
+# is reachable at http://localhost without the 0.0.0.0 exposure
+# used in production.
+# ============================================================
+
+services:
+  nginx:
+    ports:
+      - "127.0.0.1:80:80"

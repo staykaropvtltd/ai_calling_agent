@@ -1,0 +1,278 @@
+name: CI
+
+# ─── Triggers ────────────────────────────────────────────────────────────────
+# feature → develop → main PR flow:
+#   • push to any feature/fix/hotfix/chore branch runs CI on that branch
+#   • push to develop (integration) runs CI
+#   • push to main (production) runs CI
+#   • pull_request into EITHER develop or main runs required checks
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "feature/**"
+      - "fix/**"
+      - "hotfix/**"
+      - "chore/**"
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch: {}   # Manual run button in GitHub UI
+
+# Cancel redundant runs on the same branch to avoid wasting minutes.
+# A new push to a feature branch cancels the in-progress run for that branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# ─── Jobs ────────────────────────────────────────────────────────────────────
+jobs:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 1 — Lint
+  # Fastest job. All other jobs depend on this passing first.
+  # Catches: import order, unused vars, undefined names, bugbear patterns.
+  # ──────────────────────────────────────────────────────────────────────────
+  lint:
+    name: "Lint (ruff)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff==0.6.9
+
+      - name: Lint — app/
+        run: ruff check app/
+
+      - name: Lint — services/
+        run: ruff check services/
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 2 — Security Scan
+  # Runs after lint in parallel with tests and docker-build.
+  #
+  # bandit: static Python security analysis — exits non-zero on medium+ issues.
+  # pip-audit: dependency CVE scan — exits non-zero on unfixed/known vulns.
+  #
+  # Known accepted vulnerabilities — no fix available or requires a separate
+  # FastAPI/starlette/python-jose bundle upgrade (tracked in SECURITY_NOTICE.md).
+  # Any NEW vulnerability not on this list will still fail CI.
+  #
+  #   PYSEC-2026-1325  ecdsa    — no upstream fix published
+  #   PYSEC-2025-185   python-jose — no upstream fix published
+  #   PYSEC-2026-2263  pyasn1   — python-jose 3.4.0 pins pyasn1<0.5; unfixable
+  #   PYSEC-2026-3455  pyasn1   — same constraint; unfixable
+  #   PYSEC-2026-3456  pyasn1   — same constraint; unfixable
+  #   PYSEC-2026-3457  pyasn1   — same constraint; unfixable
+  #   PYSEC-2026-161   starlette — fix requires starlette ≥1.0.1 (FastAPI upgrade)
+  #   PYSEC-2026-248   starlette — fix requires starlette ≥1.3.0 (FastAPI upgrade)
+  #   PYSEC-2026-249   starlette — fix requires starlette ≥1.3.1 (FastAPI upgrade)
+  #   PYSEC-2026-1943  starlette — fix requires starlette ≥0.40.0 (FastAPI upgrade)
+  #   PYSEC-2026-1941  starlette — fix requires starlette ≥0.47.2 (FastAPI upgrade)
+  #   PYSEC-2026-2281  starlette — fix requires starlette ≥1.1.0  (FastAPI upgrade)
+  #   PYSEC-2026-2280  starlette — fix requires starlette ≥1.1.0  (FastAPI upgrade)
+  # ──────────────────────────────────────────────────────────────────────────
+  security:
+    name: "Security (bandit · pip-audit)"
+    runs-on: ubuntu-latest
+    needs: [lint]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install security tools
+        run: pip install bandit~=1.7 pip-audit~=2.7
+
+      - name: bandit — services/api/src (medium+ severity)
+        run: bandit -r services/api/src -ll -q
+
+      - name: bandit — app/ (medium+ severity)
+        run: bandit -r app/ -ll -q
+
+      - name: pip-audit — root requirements
+        run: |
+          pip-audit -r requirements.txt \
+            --ignore-vuln PYSEC-2026-1325
+
+      - name: pip-audit — services/api
+        run: |
+          pip-audit -r services/api/requirements.txt \
+            --ignore-vuln PYSEC-2025-185 \
+            --ignore-vuln PYSEC-2026-1325 \
+            --ignore-vuln PYSEC-2026-2263 \
+            --ignore-vuln PYSEC-2026-3455 \
+            --ignore-vuln PYSEC-2026-3456 \
+            --ignore-vuln PYSEC-2026-3457 \
+            --ignore-vuln PYSEC-2026-161 \
+            --ignore-vuln PYSEC-2026-248 \
+            --ignore-vuln PYSEC-2026-249 \
+            --ignore-vuln PYSEC-2026-1943 \
+            --ignore-vuln PYSEC-2026-1941 \
+            --ignore-vuln PYSEC-2026-2281 \
+            --ignore-vuln PYSEC-2026-2280
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 3 — Unit Tests
+  # Runs after lint passes.
+  # - app/tests/ — mocked Redis/DB tests for legacy app/ code
+  # - services/api/tests/ — FastAPI TestClient tests using in-memory SQLite
+  #   (no real DB or Redis needed; conftest.py overrides all env and get_db)
+  # ──────────────────────────────────────────────────────────────────────────
+  test:
+    name: "Unit Tests (pytest)"
+    runs-on: ubuntu-latest
+    needs: [lint]
+
+    env:
+      # app/tests mocks these but module-level clients need a parseable URL.
+      REDIS_URL: redis://localhost:6379/0
+      DATABASE_URL: postgresql+psycopg://ci:ci@localhost:5432/ci
+      # src/config.py reads SUPABASE_DB_URL before DATABASE_URL. Without this,
+      # conftest.py's os.environ["DATABASE_URL"]="sqlite+aiosqlite:///:memory:"
+      # reaches src/database.py's module-level create_async_engine before any
+      # test fixture runs, causing a TypeError (pool_size/max_overflow are not
+      # valid for SQLite). This dummy URL gives the module-level engine a valid
+      # PostgreSQL URL so pool args are accepted; no connection is ever made
+      # because all tests use the get_db dependency override (in-memory SQLite).
+      SUPABASE_DB_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip          # caches pip packages across runs
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt \
+                      -r services/api/requirements.txt \
+                      -r services/api/requirements-test.txt \
+                      pytest pytest-cov
+
+      - name: Run tests with coverage
+        run: |
+          pytest app/tests/ services/api/tests/ tests/ \
+            --tb=short \
+            --cov=app \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-fail-under=60
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 4 — Docker Build Validation
+  # Runs in parallel with tests and security (both need lint, not each other).
+  # Each service is built independently so a failure names the exact service.
+  # Images are NOT pushed — this is validation only.
+  # Layer cache is stored per-service in GitHub's Action Cache.
+  # ──────────────────────────────────────────────────────────────────────────
+  docker-build:
+    name: "Docker Build Validation"
+    runs-on: ubuntu-latest
+    needs: [lint]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Validate nginx dev config (nginx.conf).
+      # nginx -t resolves upstream hostnames at config-test time, but in CI
+      # there is no Compose network — "api" is unresolvable. Substitute with
+      # 127.0.0.1 for syntax validation only; production behaviour is unchanged.
+      - name: Validate nginx.conf (dev) syntax
+        run: |
+          sed 's|http://api:8000|http://127.0.0.1:8000|g' \
+            infrastructure/nginx/nginx.conf > /tmp/nginx-ci.conf
+          docker run --rm \
+            -v /tmp/nginx-ci.conf:/etc/nginx/nginx.conf:ro \
+            nginx:alpine nginx -t
+
+      # Validate nginx prod config (nginx.prod.conf — NH-03 HTTPS+WSS).
+      # Requires a self-signed cert to satisfy ssl_certificate directives during
+      # syntax check. Cert is generated in /tmp/ssl/ and never persisted.
+      - name: Validate nginx.prod.conf (HTTPS+WSS) syntax
+        run: |
+          mkdir -p /tmp/ssl /tmp/nginx-prod
+          # Self-signed cert for CI config-test only — never used in production.
+          openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+            -keyout /tmp/ssl/privkey.pem \
+            -out    /tmp/ssl/fullchain.pem \
+            -subj   "/CN=ci-test" 2>/dev/null
+
+          # Substitute upstream names (unresolvable in CI) with loopback.
+          sed \
+            -e 's|http://api:8000|http://127.0.0.1:8000|g' \
+            -e 's|http://voice-gateway:9000|http://127.0.0.1:9000|g' \
+            infrastructure/nginx/nginx.prod.conf > /tmp/nginx-prod/nginx.conf
+
+          docker run --rm \
+            -v /tmp/nginx-prod/nginx.conf:/etc/nginx/nginx.conf:ro \
+            -v /tmp/ssl:/etc/nginx/ssl:ro \
+            nginx:alpine nginx -t
+
+      - name: "Build — api"
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/api
+          file: ./services/api/Dockerfile
+          push: false
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: "Build — voice-gateway"
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/voice-gateway
+          file: ./services/voice-gateway/Dockerfile
+          push: false
+          cache-from: type=gha,scope=voice-gateway
+          cache-to: type=gha,mode=max,scope=voice-gateway
+
+      - name: "Build — worker"
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/worker
+          file: ./services/worker/Dockerfile
+          push: false
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker
+
+      - name: "Build — integration-service"
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/integration-service
+          file: ./services/integration-service/Dockerfile
+          push: false
+          cache-from: type=gha,scope=integration-service
+          cache-to: type=gha,mode=max,scope=integration-service
+
+      - name: "Build — nginx"
+        uses: docker/build-push-action@v6
+        with:
+          context: ./infrastructure/nginx
+          file: ./infrastructure/nginx/Dockerfile
+          push: false
+          cache-from: type=gha,scope=nginx
+          cache-to: type=gha,mode=max,scope=nginx
