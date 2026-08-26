@@ -133,6 +133,12 @@ jobs:
   # - app/tests/ — mocked Redis/DB tests for legacy app/ code
   # - services/api/tests/ — FastAPI TestClient tests using in-memory SQLite
   #   (no real DB or Redis needed; conftest.py overrides all env and get_db)
+  # - tests/test_gateway_callbacks.py loads services/voice-gateway/src/main.py
+  #   directly (SH-03), which imports pipecat via voice_pipeline.py — hence
+  #   services/voice-gateway/requirements.txt is installed below too, not just
+  #   the api/root ones. tests/test_tenant_isolation.py needs real Postgres and
+  #   is skipped here (no Postgres service in this job) — it runs manually/in
+  #   dev only, see PROGRESS.md.
   # ──────────────────────────────────────────────────────────────────────────
   test:
     name: "Unit Tests (pytest)"
@@ -167,6 +173,7 @@ jobs:
           pip install -r requirements.txt \
                       -r services/api/requirements.txt \
                       -r services/api/requirements-test.txt \
+                      -r services/voice-gateway/requirements.txt \
                       pytest pytest-cov
 
       - name: Run tests with coverage
