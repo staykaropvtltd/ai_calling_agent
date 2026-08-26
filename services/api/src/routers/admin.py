@@ -4,13 +4,14 @@ from datetime import UTC, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth import get_current_user
+from src.auth import get_current_user, hash_password
 from src.database import get_db
 from src.models import Caller, Client, User
+from src.tenant import get_tenant_scoped_db
 
 logger = logging.getLogger("staykaro.admin")
 
@@ -113,12 +114,16 @@ class UserCreate(BaseModel):
     full_name: str
     role: str = "agent"
     tenant_id: Optional[int] = None
+    # Optional: a user created without one has no password_hash and cannot
+    # log in via /auth/login until an admin sets one (PUT .../password).
+    password: Optional[str] = Field(default=None, min_length=8, max_length=72)
 
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     role: Optional[str] = None
     status: Optional[str] = None
+    password: Optional[str] = Field(default=None, min_length=8, max_length=72)
 
 
 class UserResponse(BaseModel):
@@ -298,7 +303,7 @@ async def delete_client(
 @router.get("/clients/{client_id}/stats", response_model=ClientStats)
 async def get_client_stats(
     client_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_scoped_db),
     _user: dict = Depends(_require_super_admin),
 ) -> ClientStats:
     client = await db.get(Client, client_id)
@@ -347,7 +352,7 @@ async def get_client_stats(
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     body: UserCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_scoped_db),
     _user: dict = Depends(_require_super_admin),
 ) -> UserResponse:
     if body.role not in VALID_USER_ROLES:
@@ -366,7 +371,8 @@ async def create_user(
         if not tenant:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
 
-    user = User(**body.model_dump())
+    fields = body.model_dump(exclude={"password"})
+    user = User(**fields, password_hash=hash_password(body.password) if body.password else None)
     db.add(user)
     await db.commit()
     await db.refresh(user)
@@ -381,7 +387,7 @@ async def list_users(
     tenant_id: Optional[int] = Query(None),
     role: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_scoped_db),
     user: dict = Depends(_require_admin),
 ) -> PaginatedUsers:
     stmt = select(User)
@@ -421,7 +427,7 @@ async def list_users(
 @router.get("/users/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_scoped_db),
     user: dict = Depends(_require_admin),
 ) -> UserResponse:
     fetched = await db.get(User, user_id)
@@ -437,7 +443,7 @@ async def get_user(
 async def update_user(
     user_id: str,
     body: UserUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_scoped_db),
     _user: dict = Depends(_require_super_admin),
 ) -> UserResponse:
     user = await db.get(User, user_id)
@@ -455,6 +461,10 @@ async def update_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"status must be one of {sorted(VALID_USER_STATUSES)}",
         )
+    if "password" in updates:
+        # password isn't a User column — password_hash is. Left as a plain
+        # setattr, this would silently no-op instead of persisting.
+        user.password_hash = hash_password(updates.pop("password"))
 
     for field, value in updates.items():
         setattr(user, field, value)
@@ -466,7 +476,7 @@ async def update_user(
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_scoped_db),
     _user: dict = Depends(_require_super_admin),
 ) -> None:
     """Soft delete — sets status to 'suspended'. Data is retained."""
@@ -486,7 +496,7 @@ async def list_calls(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     tenant_id: Optional[int] = Query(None, description="Filter by client/tenant id"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_scoped_db),
     user: dict = Depends(_require_admin),
 ) -> PaginatedCalls:
     stmt = select(Caller)
@@ -521,7 +531,7 @@ async def list_calls(
 @router.get("/calls/{call_id}", response_model=CallResponse)
 async def get_call(
     call_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_scoped_db),
     user: dict = Depends(_require_admin),
 ) -> Caller:
     call = await db.get(Caller, call_id)
@@ -702,7 +712,7 @@ async def delete_tenant(
 @router.get("/tenants/{tenant_id}/stats", response_model=TenantStats)
 async def get_tenant_stats(
     tenant_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_scoped_db),
     _user: dict = Depends(_require_super_admin),
 ) -> TenantStats:
     client = await db.get(Client, tenant_id)

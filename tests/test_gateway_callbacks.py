@@ -14,6 +14,8 @@ Covers all required scenarios:
   - CallStore persistence: set on start, get on end, delete after finalization
   - Simulated gateway restart: router B finalizes a call started by router A
   - _RedisCallStore unit tests via _FakeRedis
+  - Voice WebSocket endpoint (/ws/{call_id}) sharing the same session_manager
+    as the Exotel callback router — the CP1 "empty call lifecycle" path
 """
 
 from __future__ import annotations
@@ -697,3 +699,45 @@ def test_redis_call_store_redis_error_is_handled_gracefully():
     assert store.get("x") is None  # does not raise
     store.set("x", "y")  # does not raise (warning logged)
     store.delete("x")  # does not raise
+
+
+# ── 9. Voice WebSocket endpoint (SH-03) ─────────────────────────────────────────
+# Exercises the real production app (_GW_MAIN.app), not an isolated router —
+# this is what proves the WebSocket handler and the Exotel callback router
+# actually share one session_manager instance.
+
+
+def test_voice_websocket_route_is_registered():
+    client = TestClient(_GW_MAIN.app)
+    with client.websocket_connect("/ws/test-ws-route"):
+        pass
+
+
+def test_voice_websocket_creates_and_removes_session():
+    """Connecting to /ws/{call_id} creates a session; disconnecting removes it."""
+    client = TestClient(_GW_MAIN.app)
+    call_id = "test-ws-lifecycle"
+
+    with client.websocket_connect(f"/ws/{call_id}"):
+        session = _GW_MAIN.session_manager.get(call_id)
+        assert session is not None
+        assert session["call_id"] == call_id
+        assert session["status"] == "active"
+
+    assert _GW_MAIN.session_manager.get(call_id) is None
+
+
+def test_voice_websocket_reuses_session_created_by_callback():
+    """A session already created via the Exotel callback path (tenant/agent
+    resolved) is the same one the WebSocket handler sees and cleans up —
+    proving the shared session_manager wiring, not two divergent stores."""
+    call_id = "test-ws-reuse"
+    _GW_MAIN.session_manager.create(call_id, tenant_id="acme", agent_id="agent-1")
+
+    client = TestClient(_GW_MAIN.app)
+    with client.websocket_connect(f"/ws/{call_id}"):
+        session = _GW_MAIN.session_manager.get(call_id)
+        assert session["tenant_id"] == "acme"
+        assert session["agent_id"] == "agent-1"
+
+    assert _GW_MAIN.session_manager.get(call_id) is None

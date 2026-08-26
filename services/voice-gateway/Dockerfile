@@ -56,8 +56,9 @@ WORKDIR /app
 # Application code
 COPY src/ ./src/
 
-# Gateway modules required by src/main.py (exotel router, internal calls client, dev routing)
-COPY exotel_routes.py internal_calls.py dev_routing.py ./
+# Gateway modules required by src/main.py (exotel router, internal calls
+# client, dev routing, Pipecat voice pipeline)
+COPY exotel_routes.py internal_calls.py dev_routing.py voice_pipeline.py ./
 
 # Ensure the app directory is owned by the non-root user
 RUN chown -R appuser:appuser /app

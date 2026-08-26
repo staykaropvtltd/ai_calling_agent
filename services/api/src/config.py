@@ -16,7 +16,7 @@ REDIS_URL: str = os.getenv("REDIS_URL", "")
 _raw_db_url: str = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL") or ""
 
 
-def _to_asyncpg_url(url: str) -> str:
+def to_asyncpg_url(url: str) -> str:
     """Normalise any postgres:// variant to postgresql+asyncpg:// for asyncpg."""
     if not url or "+asyncpg" in url:
         return url
@@ -30,7 +30,7 @@ def _to_asyncpg_url(url: str) -> str:
     return url
 
 
-DATABASE_URL: str = _to_asyncpg_url(_raw_db_url)
+DATABASE_URL: str = to_asyncpg_url(_raw_db_url)
 # Supabase mandates TLS; default true. Set DB_SSL_REQUIRED=false only for
 # local non-Supabase dev.
 DB_SSL_REQUIRED: bool = os.getenv("DB_SSL_REQUIRED", "true").lower() == "true"

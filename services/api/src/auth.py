@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import Optional
 
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -13,6 +14,22 @@ from src.config import (
 )
 
 _bearer = HTTPBearer(auto_error=False)
+
+# bcrypt caps input at 72 bytes; anything longer is silently truncated by the
+# library itself, so no length validation is needed here beyond a sane cap
+# against pathological input (enforced by Pydantic on UserCreate.password).
+
+
+def hash_password(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except ValueError:
+        # Malformed/legacy hash (e.g. empty string) — never a valid match.
+        return False
 
 # Permissions granted per role, returned by GET /auth/me.
 _ROLE_PERMISSIONS: dict[str, list[str]] = {

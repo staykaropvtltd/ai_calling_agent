@@ -9,7 +9,7 @@ from typing import Optional
 import redis
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import (
@@ -18,6 +18,7 @@ from src.auth import (
     create_refresh_token,
     decode_refresh_token,
     get_current_user,
+    verify_password,
 )
 from src.config import (
     API_ADMIN_EMAIL,
@@ -27,14 +28,8 @@ from src.config import (
     REDIS_URL,
     validate_startup_config,
 )
-from src.database import Base, engine, get_db
-from src.models import (  # noqa: F401 — registers all models with Base
-    Call,
-    Caller,
-    Client,
-    PhoneNumberRoute,
-    User,
-)
+from src.database import engine, get_db
+from src.models import Caller, User
 from src.routers.admin import router as admin_router
 from src.routers.internal import router as internal_router
 
@@ -49,13 +44,18 @@ logger = logging.getLogger("staykaro.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Schema is owned by Alembic (NK-02, Database Design §9) and applied by
+    # docker-entrypoint.sh / CI before this process starts — never create_all()
+    # here. This just confirms the migrated schema is actually reachable.
     validate_startup_config()
     try:
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info("Database schema ready (call_requests, clients, admin_users)")
+            await conn.execute(text("SELECT 1 FROM admin_users LIMIT 1"))
+        logger.info("Database schema reachable (migrations applied)")
     except Exception as exc:
-        logger.error("DB init failed at startup — continuing: %s", exc)
+        logger.error(
+            "Database schema check failed — has `alembic upgrade head` been run? %s", exc
+        )
     yield
     await engine.dispose()
 
@@ -222,32 +222,71 @@ async def keepalive(db: AsyncSession = Depends(get_db)) -> dict:
 
 
 @app.post("/auth/login", response_model=TokenResponse, tags=["auth"])
-async def login(body: LoginRequest) -> TokenResponse:
-    if not API_ADMIN_EMAIL or not API_PASSWORD:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication not configured",
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+    # NK-05: admin_users is the real credential store — password_hash is
+    # bcrypt, never plaintext (Database Design §2). API_ADMIN_EMAIL/API_PASSWORD
+    # is kept only as a break-glass bootstrap login for the very first deploy,
+    # before any admin_users row exists; it never overrides a matching DB user.
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+
+    if user is not None:
+        if user.status != "active" or not user.password_hash:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if not verify_password(body.password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return TokenResponse(
+            access_token=create_access_token(
+                user.id,
+                role=user.role or "agent",
+                client_id=user.tenant_id,
+                email=user.email,
+                full_name=user.full_name,
+            ),
+            refresh_token=create_refresh_token(
+                user.id,
+                role=user.role or "agent",
+                email=user.email,
+                full_name=user.full_name,
+            ),
+            expires_in=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         )
-    if body.email != API_ADMIN_EMAIL or body.password != API_PASSWORD:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Bearer"},
+
+    if API_ADMIN_EMAIL and API_PASSWORD and body.email == API_ADMIN_EMAIL:
+        if body.password != API_PASSWORD:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return TokenResponse(
+            access_token=create_access_token(
+                body.email,
+                role="super_admin",
+                email=body.email,
+                full_name=API_ADMIN_FULL_NAME,
+            ),
+            refresh_token=create_refresh_token(
+                body.email,
+                role="super_admin",
+                email=body.email,
+                full_name=API_ADMIN_FULL_NAME,
+            ),
+            expires_in=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         )
-    return TokenResponse(
-        access_token=create_access_token(
-            body.email,
-            role="super_admin",
-            email=body.email,
-            full_name=API_ADMIN_FULL_NAME,
-        ),
-        refresh_token=create_refresh_token(
-            body.email,
-            role="super_admin",
-            email=body.email,
-            full_name=API_ADMIN_FULL_NAME,
-        ),
-        expires_in=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid credentials",
+        headers={"WWW-Authenticate": "Bearer"},
     )
 
 

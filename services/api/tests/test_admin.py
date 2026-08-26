@@ -12,6 +12,7 @@ from httpx import AsyncClient
 from jose import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.auth import hash_password
 from src.models import Caller, Client, User
 
 pytestmark = pytest.mark.asyncio
@@ -34,9 +35,22 @@ async def _create_client(db: AsyncSession, *, name="ACME", slug="acme") -> Clien
 
 
 async def _create_user(
-    db: AsyncSession, *, email="u@example.com", role="agent", tenant_id=None
+    db: AsyncSession,
+    *,
+    email="u@example.com",
+    role="agent",
+    tenant_id=None,
+    password=None,
+    status="active",
 ) -> User:
-    user = User(email=email, full_name="Test User", role=role, tenant_id=tenant_id)
+    user = User(
+        email=email,
+        full_name="Test User",
+        role=role,
+        tenant_id=tenant_id,
+        status=status,
+        password_hash=hash_password(password) if password else None,
+    )
     db.add(user)
     await db.commit()
     await db.refresh(user)
@@ -164,6 +178,151 @@ async def test_auth_login_wrong_email_401(api_client: AsyncClient):
         json={"email": "unknown@example.com", "password": "test-admin-password"},
     )
     assert r.status_code == 401
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NK-05 — real DB-backed login (admin_users.password_hash)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_auth_login_db_user_success(api_client: AsyncClient, db_session: AsyncSession):
+    """A DB user with a bcrypt password_hash can log in and gets their real
+    role/tenant_id/email in the token — not the hardcoded bootstrap admin."""
+    client = await _create_client(db_session)
+    await _create_user(
+        db_session,
+        email="db-user@example.com",
+        role="tenant_admin",
+        tenant_id=client.id,
+        password="correct-horse-battery",
+    )
+    r = await api_client.post(
+        "/auth/login",
+        json={"email": "db-user@example.com", "password": "correct-horse-battery"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+
+    me = await api_client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {body['access_token']}"}
+    )
+    assert me.status_code == 200
+    me_body = me.json()
+    assert me_body["email"] == "db-user@example.com"
+    assert me_body["role"] == "tenant_admin"
+    assert me_body["tenant_id"] == client.id
+
+
+async def test_auth_login_db_user_wrong_password_401(
+    api_client: AsyncClient, db_session: AsyncSession
+):
+    await _create_user(db_session, email="db-user2@example.com", password="right-password")
+    r = await api_client.post(
+        "/auth/login",
+        json={"email": "db-user2@example.com", "password": "wrong-password"},
+    )
+    assert r.status_code == 401
+
+
+async def test_auth_login_db_user_without_password_hash_401(
+    api_client: AsyncClient, db_session: AsyncSession
+):
+    """A user row with no password set (password_hash NULL) can never log in,
+    regardless of what password is supplied."""
+    await _create_user(db_session, email="no-password@example.com", password=None)
+    r = await api_client.post(
+        "/auth/login",
+        json={"email": "no-password@example.com", "password": "anything"},
+    )
+    assert r.status_code == 401
+
+
+async def test_auth_login_suspended_db_user_401(api_client: AsyncClient, db_session: AsyncSession):
+    await _create_user(
+        db_session, email="suspended@example.com", password="pw12345678", status="suspended"
+    )
+    r = await api_client.post(
+        "/auth/login",
+        json={"email": "suspended@example.com", "password": "pw12345678"},
+    )
+    assert r.status_code == 401
+
+
+async def test_auth_login_db_user_takes_precedence_over_bootstrap_admin(
+    api_client: AsyncClient, db_session: AsyncSession
+):
+    """A DB user row for the bootstrap admin's email overrides the env-var
+    fallback — the bootstrap path only applies when no matching row exists."""
+    await _create_user(
+        db_session,
+        email="admin@staykaro.com",
+        role="agent",
+        password="a-totally-different-password",
+    )
+    # The bootstrap credential (test-admin-password) must no longer work now
+    # that a DB row for this email exists.
+    r = await api_client.post(
+        "/auth/login",
+        json={"email": "admin@staykaro.com", "password": "test-admin-password"},
+    )
+    assert r.status_code == 401
+
+    r = await api_client.post(
+        "/auth/login",
+        json={"email": "admin@staykaro.com", "password": "a-totally-different-password"},
+    )
+    assert r.status_code == 200
+
+
+async def test_create_user_with_password_can_login(
+    api_client: AsyncClient, super_admin_headers: dict
+):
+    """A password set via POST /admin/users is immediately usable at /auth/login."""
+    r = await api_client.post(
+        "/admin/users",
+        json={
+            "email": "created-with-pw@example.com",
+            "full_name": "Created",
+            "role": "agent",
+            "password": "initial-password-1",
+        },
+        headers=super_admin_headers,
+    )
+    assert r.status_code == 201
+    assert "password" not in r.json()
+    assert "password_hash" not in r.json()
+
+    login = await api_client.post(
+        "/auth/login",
+        json={"email": "created-with-pw@example.com", "password": "initial-password-1"},
+    )
+    assert login.status_code == 200
+
+
+async def test_update_user_password_rotates_login(
+    api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
+):
+    """PUT /admin/users/{id} with a new password invalidates the old one."""
+    user = await _create_user(
+        db_session, email="rotate@example.com", password="old-password-1"
+    )
+    r = await api_client.put(
+        f"/admin/users/{user.id}",
+        json={"password": "new-password-1"},
+        headers=super_admin_headers,
+    )
+    assert r.status_code == 200
+    assert "password" not in r.json()
+
+    old = await api_client.post(
+        "/auth/login", json={"email": "rotate@example.com", "password": "old-password-1"}
+    )
+    assert old.status_code == 401
+
+    new = await api_client.post(
+        "/auth/login", json={"email": "rotate@example.com", "password": "new-password-1"}
+    )
+    assert new.status_code == 200
 
 
 # ─────────────────────────────────────────────────────────────────────────────
