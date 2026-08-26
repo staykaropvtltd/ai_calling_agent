@@ -173,6 +173,12 @@ See `.env.example` for the full list of required variables.
 
 **Critical variables you must set before running:**
 - `POSTGRES_PASSWORD` — change from default
+- `APP_DB_PASSWORD` — password for the restricted `staykaro_app` role the API
+  actually serves traffic as. **Must differ from `POSTGRES_PASSWORD`** —
+  `staykaro_user` is a Postgres superuser (an unavoidable side effect of how
+  `POSTGRES_USER` bootstraps) and always bypasses Row-Level Security, so NK-07
+  tenant isolation provides no real protection unless the API runs as
+  `staykaro_app` instead. See `services/api/alembic/versions/df467b3bdd3f_*.py`.
 - `DEEPGRAM_API_KEY` — for speech-to-text
 - `GROQ_API_KEY` — for LLM
 - `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` — for telephony
@@ -190,15 +196,22 @@ See `.env.example` for the full list of required variables.
 | Ticket | Owner | Description | Status |
 |--------|-------|-------------|--------|
 | NH-01 | Nihal | Docker Compose skeleton | ✅ Complete |
-| NH-02 | Nihal | Dockerfiles per service | ⏳ Pending |
-| NH-03 | Nihal | Nginx reverse proxy | ⏳ Pending |
-| NH-04 | Nihal | GitHub Actions CI/CD | ⏳ Pending |
-| NH-05 | Nihal | VPS deployment foundation | ⏳ Pending |
-| NK-01 | Nishkala | FastAPI skeleton/config | ⏳ Pending |
-| NK-02 | Nishkala | PostgreSQL schema/migrations | ⏳ Pending |
-| NK-03 | Nishkala | Redis call sessions | ⏳ Pending |
-| NK-04 | Nishkala | Health/readiness endpoints | ⏳ Pending |
-| SH-03 | Shivashree | Voice Gateway/Pipecat | ⏳ Pending |
+| NH-02 | Nihal | Dockerfiles per service | ✅ Complete |
+| NH-03 | Nihal | Nginx reverse proxy | ✅ Complete |
+| NH-04 | Nihal | GitHub Actions CI/CD | ✅ Complete |
+| NH-05 | Nihal | VPS deployment foundation | ✅ Complete |
+| NK-01 | Nishkala | FastAPI skeleton/config | ✅ Complete |
+| NK-02 | Nishkala | PostgreSQL schema/migrations | ✅ Complete — Alembic, not create_all |
+| NK-03 | Nishkala | Redis call sessions | ✅ Complete |
+| NK-04 | Nishkala | Health/readiness endpoints | ✅ Complete |
+| SH-03 | Shivashree | Voice Gateway/Pipecat | ✅ Complete — empty-call lifecycle; STT/LLM/TTS (SH-04/06/08) not started |
+
+CP1 (stack + health + empty call lifecycle) is met. Phase 4 (multi-tenancy) is
+partially in place ahead of schedule: NK-05 (real DB-backed auth) and NK-07
+(PostgreSQL Row-Level Security, `staykaro_app` role — see
+`services/api/alembic/versions/df467b3bdd3f_*.py`) are done and tested
+end-to-end; NK-06 (full RBAC) and NK-08 (formal pen-test suite beyond
+`tests/test_tenant_isolation.py`) are still open.
 
 ## Security
 

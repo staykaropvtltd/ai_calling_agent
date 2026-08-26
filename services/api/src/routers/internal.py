@@ -10,8 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database import get_db
 from src.models import Call, PhoneNumberRoute
+from src.tenant import get_internal_service_db
 
 logger = logging.getLogger("staykaro.internal")
 
@@ -76,7 +76,7 @@ class PhoneRouteResponse(BaseModel):
 @router.post("/calls", response_model=CallCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_call(
     body: CallCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_internal_service_db),
 ) -> Call:
     existing = await db.get(Call, body.call_id)
     if existing is not None:
@@ -102,7 +102,7 @@ async def create_call(
 @router.get("/calls/{call_id}", response_model=CallStateResponse)
 async def get_call(
     call_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_internal_service_db),
 ) -> Call:
     call = await db.get(Call, call_id)
     if call is None:
@@ -114,7 +114,7 @@ async def get_call(
 async def finalize_call(
     call_id: str,
     body: FinalizeRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_internal_service_db),
 ) -> FinalizeResponse:
     call = await db.get(Call, call_id)
     if call is None:
@@ -151,7 +151,7 @@ async def finalize_call(
 @router.get("/phone-routes/{number}", response_model=PhoneRouteResponse)
 async def get_phone_route(
     number: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_internal_service_db),
 ) -> PhoneRouteResponse:
     route = await db.get(PhoneNumberRoute, number)
     if route is None:

@@ -32,8 +32,8 @@ The following CVEs are tracked and accepted pending a FastAPI/starlette bundle u
 
 ### Fix requires FastAPI/starlette upgrade (out of scope for this PR)
 
-FastAPI 0.115.0 pins `starlette <0.38.7`. Fixing the starlette CVEs below
-requires upgrading `fastapi` to a version that accepts starlette ≥0.47.2.
+FastAPI 0.115.6 pins `starlette <0.42.0,>=0.40.0`. Fixing the starlette CVEs
+below requires upgrading `fastapi` to a version that accepts starlette ≥0.47.2.
 This is tracked as a separate dependency-upgrade task.
 
 | Package | CVE ID | Fix version |
@@ -45,6 +45,7 @@ This is tracked as a separate dependency-upgrade task.
 | `starlette` | PYSEC-2026-1941 | ≥0.47.2 |
 | `starlette` | PYSEC-2026-2281 | ≥1.1.0 |
 | `starlette` | PYSEC-2026-2280 | ≥1.1.0 |
+| `starlette` | PYSEC-2026-1942 | ≥0.49.1 |
 
 ### Fixed in this PR
 

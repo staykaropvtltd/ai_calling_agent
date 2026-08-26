@@ -56,9 +56,12 @@ WORKDIR /app
 
 # Application code
 COPY src/ ./src/
+COPY alembic/ ./alembic/
+COPY alembic.ini ./
+COPY docker-entrypoint.sh ./
 
 # Ensure the app directory is owned by the non-root user
-RUN chown -R appuser:appuser /app
+RUN chown -R appuser:appuser /app && chmod +x /app/docker-entrypoint.sh
 
 # Switch to non-root user
 USER appuser
@@ -69,4 +72,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 EXPOSE 8000
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]

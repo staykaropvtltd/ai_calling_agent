@@ -112,7 +112,14 @@ services:
     restart: unless-stopped
 
     environment:
+      # DATABASE_URL: the restricted staykaro_app role — what uvicorn serves
+      # traffic as, and the role NK-07's RLS policies actually restrict.
       DATABASE_URL: ${DATABASE_URL}
+      # MIGRATION_DATABASE_URL: staykaro_user (superuser) — docker-entrypoint.sh
+      # runs `alembic upgrade head` with this before uvicorn starts. Superusers
+      # always bypass RLS, which is exactly why the app itself must not use it.
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
       REDIS_URL: ${REDIS_URL}
       BLAND_API_KEY: ${BLAND_API_KEY}
 

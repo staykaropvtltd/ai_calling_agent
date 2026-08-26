@@ -45,6 +45,15 @@ class _ExotelConfig:
     webhook_token: str
 
 
+# redis-py's default connect/socket timeouts are unbounded (OS TCP-stack
+# dependent, observed 4s+ locally and potentially much longer elsewhere) —
+# calls here are synchronous and made directly from async request handlers
+# with no executor offload, so an unreachable Redis would otherwise stall
+# the entire event loop (all in-flight calls on this gateway instance) for
+# however long the OS takes to give up on the connection.
+_REDIS_SOCKET_TIMEOUT_SECS = 2.0
+
+
 class _GatewaySessionManager:
     """In-memory + Redis call session store for the production voice-gateway app.
 
@@ -63,7 +72,16 @@ class _GatewaySessionManager:
         else:
             url = os.environ.get("REDIS_URL")
             try:
-                self._r = _redis_lib.Redis.from_url(url, decode_responses=True) if url else None
+                self._r = (
+                    _redis_lib.Redis.from_url(
+                        url,
+                        decode_responses=True,
+                        socket_connect_timeout=_REDIS_SOCKET_TIMEOUT_SECS,
+                        socket_timeout=_REDIS_SOCKET_TIMEOUT_SECS,
+                    )
+                    if url
+                    else None
+                )
             except Exception as exc:
                 logger.warning("Redis unavailable for session manager: %s", exc)
                 self._r = None
@@ -170,6 +188,37 @@ class _RedisCallStore:
             self._r.delete(self._key(provider_call_id))
 
 
+# ── Shared session manager (SH-03 / SH-01) ────────────────────────────────────
+#
+# One instance, shared between the Exotel callback router (creates/ends
+# sessions from call lifecycle events) and the voice WebSocket router (reads
+# the same session when the audio stream connects). Built unconditionally —
+# CP1 (empty call lifecycle) must hold even with no telephony provider
+# configured yet.
+
+_redis_url = os.environ.get("REDIS_URL")
+_shared_redis: _redis_lib.Redis | None = None
+if _redis_url:
+    try:
+        _shared_redis = _redis_lib.Redis.from_url(
+            _redis_url,
+            decode_responses=True,
+            socket_connect_timeout=_REDIS_SOCKET_TIMEOUT_SECS,
+            socket_timeout=_REDIS_SOCKET_TIMEOUT_SECS,
+        )
+    except Exception as exc:
+        logger.warning("Redis unavailable — sessions will be in-memory only: %s", exc)
+else:
+    logger.warning("REDIS_URL is not set — sessions will be in-memory only.")
+
+session_manager = _GatewaySessionManager(redis_client=_shared_redis)
+
+from voice_pipeline import build_voice_router  # noqa: E402
+
+app.include_router(build_voice_router(session_manager))
+logger.info("Voice WebSocket router registered at /ws/{call_id}")
+
+
 # ── Router registration ───────────────────────────────────────────────────────
 
 
@@ -191,23 +240,9 @@ def _register_exotel_router() -> None:
     internal_api_url = os.environ.get("INTERNAL_API_URL", "http://api:8000")
     calls = InternalCallsClient(base_url=internal_api_url)
 
-    # Build one Redis client and share it between the session manager and the
-    # call store — avoids opening two separate connections to the same server.
-    redis_url = os.environ.get("REDIS_URL")
-    shared_redis: _redis_lib.Redis | None = None
-    if redis_url:
-        try:
-            shared_redis = _redis_lib.Redis.from_url(redis_url, decode_responses=True)
-        except Exception as exc:
-            logger.warning(
-                "Redis unavailable — sessions and call store will be in-memory only: %s", exc
-            )
-
-    session_manager = _GatewaySessionManager(redis_client=shared_redis)
-
     call_store: _RedisCallStore | None = None
-    if shared_redis is not None:
-        call_store = _RedisCallStore(shared_redis)
+    if _shared_redis is not None:
+        call_store = _RedisCallStore(_shared_redis)
     else:
         logger.warning(
             "REDIS_URL is not set or Redis is unreachable — "
