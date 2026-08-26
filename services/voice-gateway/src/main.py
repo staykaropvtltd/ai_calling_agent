@@ -45,6 +45,15 @@ class _ExotelConfig:
     webhook_token: str
 
 
+# redis-py's default connect/socket timeouts are unbounded (OS TCP-stack
+# dependent, observed 4s+ locally and potentially much longer elsewhere) —
+# calls here are synchronous and made directly from async request handlers
+# with no executor offload, so an unreachable Redis would otherwise stall
+# the entire event loop (all in-flight calls on this gateway instance) for
+# however long the OS takes to give up on the connection.
+_REDIS_SOCKET_TIMEOUT_SECS = 2.0
+
+
 class _GatewaySessionManager:
     """In-memory + Redis call session store for the production voice-gateway app.
 
@@ -63,7 +72,16 @@ class _GatewaySessionManager:
         else:
             url = os.environ.get("REDIS_URL")
             try:
-                self._r = _redis_lib.Redis.from_url(url, decode_responses=True) if url else None
+                self._r = (
+                    _redis_lib.Redis.from_url(
+                        url,
+                        decode_responses=True,
+                        socket_connect_timeout=_REDIS_SOCKET_TIMEOUT_SECS,
+                        socket_timeout=_REDIS_SOCKET_TIMEOUT_SECS,
+                    )
+                    if url
+                    else None
+                )
             except Exception as exc:
                 logger.warning("Redis unavailable for session manager: %s", exc)
                 self._r = None
@@ -182,7 +200,12 @@ _redis_url = os.environ.get("REDIS_URL")
 _shared_redis: _redis_lib.Redis | None = None
 if _redis_url:
     try:
-        _shared_redis = _redis_lib.Redis.from_url(_redis_url, decode_responses=True)
+        _shared_redis = _redis_lib.Redis.from_url(
+            _redis_url,
+            decode_responses=True,
+            socket_connect_timeout=_REDIS_SOCKET_TIMEOUT_SECS,
+            socket_timeout=_REDIS_SOCKET_TIMEOUT_SECS,
+        )
     except Exception as exc:
         logger.warning("Redis unavailable — sessions will be in-memory only: %s", exc)
 else:

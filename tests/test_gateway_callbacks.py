@@ -21,6 +21,7 @@ Covers all required scenarios:
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -38,12 +39,32 @@ from exotel_routes import build_exotel_router  # noqa: E402
 # placing services/api/src/main into sys.modules under the name "src.main".  A direct
 # `from src.main import _RedisCallStore` would therefore resolve to the wrong module.
 # Load the gateway's src/main.py explicitly under a private module name to avoid that.
-_gw_main_path = Path(_VG) / "src" / "main.py"
-_gw_spec = importlib.util.spec_from_file_location("_voice_gateway_main", str(_gw_main_path))
-_GW_MAIN = importlib.util.module_from_spec(_gw_spec)
-# Register before exec_module so that @dataclass can resolve the module's __dict__.
-sys.modules["_voice_gateway_main"] = _GW_MAIN
-_gw_spec.loader.exec_module(_GW_MAIN)  # type: ignore[union-attr]
+#
+# src/main.py builds its module-level `session_manager`/`_shared_redis` from
+# REDIS_URL at import time, and the websocket tests below exercise that real
+# session_manager directly (unlike the Exotel callback tests in this file,
+# which build their own router with _FakeRedis and never touch it). Match the
+# project's "no real DB/Redis needed for unit tests" convention (see
+# services/api/tests/conftest.py's REDIS_URL comment) by forcing REDIS_URL
+# unset for this one import, so session_manager falls back to its already-
+# supported in-memory-only mode instead of trying to reach a real Redis that
+# isn't running in CI. Without this, session_manager.get()/.create() block on
+# a real (unbounded, synchronous) connection attempt to an unreachable Redis,
+# which previously caused test_voice_websocket_creates_and_removes_session to
+# fail nondeterministically depending on which of two independent, similarly
+# slow Redis calls (this test's own session_manager.get() vs. the websocket
+# handler's) happened to time out and fall back to None first.
+_saved_redis_url = os.environ.pop("REDIS_URL", None)
+try:
+    _gw_main_path = Path(_VG) / "src" / "main.py"
+    _gw_spec = importlib.util.spec_from_file_location("_voice_gateway_main", str(_gw_main_path))
+    _GW_MAIN = importlib.util.module_from_spec(_gw_spec)
+    # Register before exec_module so that @dataclass can resolve the module's __dict__.
+    sys.modules["_voice_gateway_main"] = _GW_MAIN
+    _gw_spec.loader.exec_module(_GW_MAIN)  # type: ignore[union-attr]
+finally:
+    if _saved_redis_url is not None:
+        os.environ["REDIS_URL"] = _saved_redis_url
 
 # ── CallStore test helpers ────────────────────────────────────────────────────
 
