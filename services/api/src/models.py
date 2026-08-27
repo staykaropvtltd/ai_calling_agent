@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -209,6 +210,81 @@ class AuditLog(Base):
     occurred_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (Index("idx_audit_logs_tenant_occurred", "tenant_id", "occurred_at"),)
+
+
+class CallJob(Base):
+    """
+    Phase 6 — durable background job/event record. One row per operational
+    event a webhook/callback wants processed off the request path (worker +
+    integration-service pick these up via services/api's internal job API).
+
+    Deliberately NOT the same table as CallEvent: CallEvent is an immutable
+    audit trail ("this happened during a call") with no lifecycle of its own;
+    a CallJob is mutable work-in-progress with explicit state, attempt
+    counting, and retry scheduling. Conflating the two would mean either
+    bolting job-control columns onto an audit log, or losing job semantics —
+    kept separate per the Phase 6 design decision.
+
+    The partial unique index on (provider_call_id, event_type) — see the
+    Phase 6 migration — is the authoritative idempotency guarantee: a
+    duplicate webhook delivery hits a unique-constraint violation on INSERT,
+    not a race-prone read-then-write check. Both tenant_id and call_id are
+    nullable because the "connected" event fires before routing has resolved
+    a tenant or a call has been created — a job can still be durably recorded
+    and deduplicated before either exists.
+    """
+
+    __tablename__ = "call_jobs"
+
+    job_id = Column(String(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
+    tenant_id = Column(String(255), nullable=True, index=True)
+    call_id = Column(String(36), ForeignKey("calls.call_id", ondelete="SET NULL"), nullable=True)
+    provider_call_id = Column(String(255), nullable=True)
+    event_type = Column(String(50), nullable=False)
+    payload = Column(_JSONB, nullable=True)
+
+    # queued -> processing -> completed
+    #                    \-> retrying -> processing (loop until terminal)
+    #                    \-> failed (terminal, no further retries)
+    status = Column(String(20), nullable=False, server_default="queued")
+    attempts = Column(Integer, nullable=False, server_default="0")
+    max_attempts = Column(Integer, nullable=False, server_default="5")
+    last_error = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    # Claim/backoff gate: a job is eligible for claiming only once now() >=
+    # available_at. Set to now() on creation (immediately eligible), and
+    # pushed forward on a retryable failure per the worker's backoff policy.
+    available_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'completed', 'failed', 'retrying')",
+            name="ck_call_jobs_status",
+        ),
+        Index("idx_call_jobs_status_available", "status", "available_at"),
+        Index("idx_call_jobs_tenant_status", "tenant_id", "status"),
+        Index("idx_call_jobs_call_id", "call_id"),
+        # The authoritative idempotency guarantee (see routers/jobs.py's
+        # module docstring) — must be declared here, not only in the
+        # Alembic migration, since the unit test suite builds its schema
+        # from this model via Base.metadata.create_all (conftest.py), not
+        # from migrations. sqlite_where mirrors postgresql_where so the
+        # constraint is real (not silently absent) under both backends this
+        # repository actually runs against.
+        Index(
+            "uq_call_jobs_provider_event",
+            "provider_call_id",
+            "event_type",
+            unique=True,
+            postgresql_where=text("provider_call_id IS NOT NULL"),
+            sqlite_where=text("provider_call_id IS NOT NULL"),
+        ),
+    )
 
 
 class PhoneNumberRoute(Base):

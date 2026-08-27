@@ -413,3 +413,200 @@ async def test_calls_table_all_tenants_sentinel_sees_both(app_conn, two_tenant_c
         two_tenant_calls["call_a"],
         two_tenant_calls["call_b"],
     }
+
+
+# ── Phase 6 — `call_jobs` table (durable job/event record, distinct from the
+# audit-only `call_events` table and never reused as one — see
+# services/api/src/models.py::CallJob's docstring) ─────────────────────────
+#
+# Same RLS policy shape as `calls`, added in a NEW migration
+# (7b1c9e2a4f3d_phase6_call_jobs.py) rather than editing df467b3bdd3f.
+# tenant_id is nullable here (unlike calls.tenant_id) — a job recorded before
+# routing resolves a tenant has none yet — so these tests also cover that a
+# NULL-tenant row is invisible under a real tenant context and only visible
+# under the __all_tenants__ bypass, never under "no context at all".
+
+
+@pytest.fixture
+async def two_tenant_jobs():
+    admin = await _connect_or_skip(_SUPERUSER_DSN)
+    row = await admin.fetchrow(
+        "SELECT 1 FROM pg_policies WHERE tablename = 'call_jobs' "
+        "AND policyname = 'tenant_isolation'"
+    )
+    if row is None:
+        await admin.close()
+        pytest.skip(
+            "7b1c9e2a4f3d (Phase 6 call_jobs RLS) not applied to this database — "
+            "run `alembic upgrade head` with MIGRATION_DATABASE_URL set first."
+        )
+
+    tenant_a = await admin.fetchval(
+        "INSERT INTO clients (name, slug) VALUES ($1, $2) RETURNING id",
+        "RLS Jobs Tenant A",
+        f"rls-jobs-a-{os.getpid()}",
+    )
+    tenant_b = await admin.fetchval(
+        "INSERT INTO clients (name, slug) VALUES ($1, $2) RETURNING id",
+        "RLS Jobs Tenant B",
+        f"rls-jobs-b-{os.getpid()}",
+    )
+    job_a = await admin.fetchval(
+        "INSERT INTO call_jobs (job_id, tenant_id, event_type, provider_call_id) "
+        "VALUES (gen_random_uuid()::text, $1, 'connected', $2) RETURNING job_id",
+        str(tenant_a),
+        f"rls-job-provider-a-{os.getpid()}",
+    )
+    job_b = await admin.fetchval(
+        "INSERT INTO call_jobs (job_id, tenant_id, event_type, provider_call_id) "
+        "VALUES (gen_random_uuid()::text, $1, 'connected', $2) RETURNING job_id",
+        str(tenant_b),
+        f"rls-job-provider-b-{os.getpid()}",
+    )
+    job_no_tenant = await admin.fetchval(
+        "INSERT INTO call_jobs (job_id, tenant_id, event_type, provider_call_id) "
+        "VALUES (gen_random_uuid()::text, NULL, 'connected', $1) RETURNING job_id",
+        f"rls-job-provider-null-{os.getpid()}",
+    )
+
+    try:
+        yield {
+            "tenant_a": tenant_a,
+            "tenant_b": tenant_b,
+            "job_a": job_a,
+            "job_b": job_b,
+            "job_no_tenant": job_no_tenant,
+        }
+    finally:
+        await admin.execute(
+            "DELETE FROM call_jobs WHERE job_id = ANY($1::text[])",
+            [job_a, job_b, job_no_tenant],
+        )
+        await admin.execute(
+            "DELETE FROM clients WHERE id = ANY($1::int[])", [tenant_a, tenant_b]
+        )
+        await admin.close()
+
+
+async def test_call_jobs_tenant_sees_only_its_own_job(app_conn, two_tenant_jobs):
+    await _set_tenant(app_conn, str(two_tenant_jobs["tenant_a"]))
+    rows = await app_conn.fetch("SELECT job_id FROM call_jobs")
+    assert {r["job_id"] for r in rows} == {two_tenant_jobs["job_a"]}
+
+
+async def test_call_jobs_cross_tenant_read_returns_nothing(app_conn, two_tenant_jobs):
+    await _set_tenant(app_conn, str(two_tenant_jobs["tenant_a"]))
+    row = await app_conn.fetchrow(
+        "SELECT job_id FROM call_jobs WHERE job_id = $1", two_tenant_jobs["job_b"]
+    )
+    assert row is None
+
+
+async def test_call_jobs_cross_tenant_claim_affects_nothing(app_conn, two_tenant_jobs):
+    """The exact operation routers/jobs.py::claim_event performs, attempted
+    against a job belonging to a different tenant."""
+    async with app_conn.transaction():
+        await _set_tenant(app_conn, str(two_tenant_jobs["tenant_a"]))
+        result = await app_conn.execute(
+            "UPDATE call_jobs SET status = 'processing', attempts = attempts + 1 "
+            "WHERE job_id = $1 AND status = 'queued'",
+            two_tenant_jobs["job_b"],
+        )
+        assert result == "UPDATE 0"
+
+    async with app_conn.transaction():
+        await _set_tenant(app_conn, str(two_tenant_jobs["tenant_b"]))
+        row = await app_conn.fetchrow(
+            "SELECT status, attempts FROM call_jobs WHERE job_id = $1", two_tenant_jobs["job_b"]
+        )
+        assert row["status"] == "queued"
+        assert row["attempts"] == 0
+
+
+async def test_call_jobs_cross_tenant_insert_is_rejected(app_conn, two_tenant_jobs):
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+        async with app_conn.transaction():
+            await _set_tenant(app_conn, str(two_tenant_jobs["tenant_a"]))
+            await app_conn.execute(
+                "INSERT INTO call_jobs (job_id, tenant_id, event_type) "
+                "VALUES (gen_random_uuid()::text, $1, 'forged')",
+                str(two_tenant_jobs["tenant_b"]),
+            )
+
+
+async def test_call_jobs_no_tenant_context_fails_closed(app_conn, two_tenant_jobs):
+    rows = await app_conn.fetch(
+        "SELECT job_id FROM call_jobs WHERE job_id = ANY($1::text[])",
+        [two_tenant_jobs["job_a"], two_tenant_jobs["job_b"]],
+    )
+    assert rows == []
+
+
+async def test_call_jobs_null_tenant_row_invisible_without_bypass_sentinel(
+    app_conn, two_tenant_jobs
+):
+    """A job recorded before a tenant was known (tenant_id IS NULL) is not
+    visible under a real tenant context — NULL never equals a specific
+    tenant value in SQL, so this falls out of the same USING clause as every
+    other row, not a special case in the policy."""
+    await _set_tenant(app_conn, str(two_tenant_jobs["tenant_a"]))
+    row = await app_conn.fetchrow(
+        "SELECT job_id FROM call_jobs WHERE job_id = $1", two_tenant_jobs["job_no_tenant"]
+    )
+    assert row is None
+
+
+async def test_call_jobs_all_tenants_sentinel_sees_all_including_null_tenant(
+    app_conn, two_tenant_jobs
+):
+    """services/worker and services/integration-service never see this
+    table directly (Constraint #1/#2 — they go through the internal API,
+    which always uses this same sentinel via get_internal_service_db) —
+    this proves the sentinel path itself, matching production wiring."""
+    await _set_tenant(app_conn, _ALL_TENANTS_SENTINEL)
+    rows = await app_conn.fetch(
+        "SELECT job_id FROM call_jobs WHERE job_id = ANY($1::text[])",
+        [
+            two_tenant_jobs["job_a"],
+            two_tenant_jobs["job_b"],
+            two_tenant_jobs["job_no_tenant"],
+        ],
+    )
+    assert {r["job_id"] for r in rows} == {
+        two_tenant_jobs["job_a"],
+        two_tenant_jobs["job_b"],
+        two_tenant_jobs["job_no_tenant"],
+    }
+
+
+async def test_call_jobs_concurrent_claim_from_separate_connections_only_one_wins(
+    two_tenant_jobs,
+):
+    """The real atomicity guarantee (Constraint #10), proven the way it
+    actually matters in production: two independent connections (standing
+    in for two worker processes, each with its own connection — not one
+    SQLAlchemy AsyncSession shared unsafely across coroutines, which is what
+    services/api/tests/test_jobs.py's equivalent single-process test
+    deliberately avoids) racing to claim the same row. Postgres's row-level
+    locking on UPDATE is what decides the winner, not application code."""
+    conn_1 = await _connect_or_skip(_APP_DSN)
+    conn_2 = await _connect_or_skip(_APP_DSN)
+    try:
+        await _set_tenant(conn_1, _ALL_TENANTS_SENTINEL)
+        await _set_tenant(conn_2, _ALL_TENANTS_SENTINEL)
+
+        claim_sql = (
+            "UPDATE call_jobs SET status = 'processing', attempts = attempts + 1 "
+            "WHERE job_id = $1 AND status = 'queued' AND available_at <= now()"
+        )
+        import asyncio
+
+        results = await asyncio.gather(
+            conn_1.execute(claim_sql, two_tenant_jobs["job_a"]),
+            conn_2.execute(claim_sql, two_tenant_jobs["job_a"]),
+        )
+        outcomes = sorted(results)
+        assert outcomes == ["UPDATE 0", "UPDATE 1"]
+    finally:
+        await conn_1.close()
+        await conn_2.close()

@@ -92,6 +92,53 @@ class _FakeCallStore:
         self._store.pop(provider_call_id, None)
 
 
+class _FakeEventRecorder:
+    """Phase 6 — shared durable EventRecorder double, mirroring
+    _FakeCallStore above: instances can be shared across router instances to
+    simulate a real external store (services/api's call_jobs table via
+    EventsClient) that survives a gateway restart, unlike
+    exotel_routes.py's own default _InMemoryEventRecorder fallback.
+    """
+
+    def __init__(self) -> None:
+        self._seen: set[tuple[str, str]] = set()
+        self.calls: list[dict] = []
+
+    async def record(
+        self,
+        *,
+        provider_call_id: str,
+        event_type: str,
+        tenant_id: str | None = None,
+        call_id: str | None = None,
+        payload: dict | None = None,
+    ) -> bool:
+        self.calls.append(
+            {
+                "provider_call_id": provider_call_id,
+                "event_type": event_type,
+                "tenant_id": tenant_id,
+                "call_id": call_id,
+                "payload": payload,
+            }
+        )
+        key = (provider_call_id, event_type)
+        if key in self._seen:
+            return True
+        self._seen.add(key)
+        return False
+
+
+class _FailingEventRecorder:
+    """Always reports the durable store as unreachable — exercises the
+    fail-closed 503 path (see exotel_routes.py's callback handler)."""
+
+    async def record(self, **kwargs) -> bool:
+        from internal_calls import InternalApiError
+
+        raise InternalApiError("events API unavailable")
+
+
 class _FakeRedis:
     """Minimal Redis substitute for testing _RedisCallStore without a real server.
 
@@ -166,12 +213,12 @@ class _Routing:
         return ("tenant-1", "agent-1")
 
 
-def _make_client(*, calls: _Calls | None = None, routing=None, call_store=None):
+def _make_client(*, calls: _Calls | None = None, routing=None, call_store=None, events=None):
     calls = calls or _Calls()
     sessions = _Sessions()
     fastapi_app = FastAPI()
     fastapi_app.include_router(
-        build_exotel_router(sessions, _Settings(), calls, routing, call_store)
+        build_exotel_router(sessions, _Settings(), calls, routing, call_store, events)
     )
     return TestClient(fastapi_app), sessions, calls
 
@@ -468,6 +515,108 @@ def test_duplicate_json_and_form_events_share_dedup_state():
     )
     assert second.json()["status"] == "duplicate"
     assert second.json()["call_id"] == call_id
+
+
+# ── 6b. Phase 6 — durable EventRecorder wiring ───────────────────────────────
+#
+# The in-memory dedup set exercised above (via _make_client's default
+# _InMemoryEventRecorder) is no longer the authoritative idempotency
+# mechanism — a real EventRecorder (EventsClient, backed by services/api's
+# call_jobs table) is. These tests wire in a fake EventRecorder to prove the
+# router actually defers to it, the same way _FakeCallStore above proves the
+# router defers to CallStore rather than its own state.
+
+
+def test_event_recorder_is_called_with_provider_call_id_and_event_type():
+    events = _FakeEventRecorder()
+    client, _, _ = _make_client(routing=_Routing(), events=events)
+    client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-events-1", "EventType": "answered", "Called": "+919"},
+    )
+    assert len(events.calls) == 1
+    assert events.calls[0]["provider_call_id"] == "exo-events-1"
+    assert events.calls[0]["event_type"] == "answered"
+
+
+def test_event_recorder_duplicate_short_circuits_before_any_side_effect():
+    """When the durable recorder itself reports a duplicate, the router must
+    not repeat call creation/finalization or touch the session — the
+    guarantee Constraint #7 asks for, proven at the call-side-effect level,
+    not just the HTTP response shape."""
+    events = _FakeEventRecorder()
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing(), events=events)
+
+    first = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-events-2", "EventType": "answered", "Called": "+919"},
+    )
+    assert first.json()["status"] == "session_started"
+    assert calls.created is not None
+    created_call_id = calls.created.call_id
+
+    calls.created = None  # reset to prove the duplicate doesn't re-create
+    second = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-events-2", "EventType": "answered", "Called": "+919"},
+    )
+    assert second.json()["status"] == "duplicate"
+    assert second.json()["call_id"] == created_call_id
+    assert calls.created is None  # calls.create() was never called again
+    assert sessions.get(created_call_id) is not None  # untouched, still active
+
+
+def test_event_recorder_unavailable_fails_closed_with_503():
+    """The durable store is now authoritative (Constraint #7) — if it can't
+    be reached, the router must not silently fall through to reprocessing
+    (or to silently dropping) the event; it fails closed, the same pattern
+    already used for calls.create/finalize failures below."""
+    events = _FailingEventRecorder()
+    calls = _Calls()
+    client, _, _ = _make_client(calls=calls, routing=_Routing(), events=events)
+
+    response = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-events-3", "EventType": "answered", "Called": "+919"},
+    )
+    assert response.status_code == 503
+    assert calls.created is None  # never reached the create step
+
+
+def test_event_recorder_durable_dedup_survives_simulated_restart():
+    """The exact scenario the durable recorder exists to fix: router A
+    handles an event, router B (a fresh instance — simulating a gateway
+    restart, empty in-memory state) shares the same durable recorder and
+    must still recognize the event as a duplicate. With the OLD in-memory-
+    only design (this router's own default fallback), router B would have
+    processed it a second time."""
+    shared_events = _FakeEventRecorder()
+
+    calls_a = _Calls()
+    client_a, _, _ = _make_client(calls=calls_a, routing=_Routing(), events=shared_events)
+    first = client_a.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-events-restart", "EventType": "answered", "Called": "+919"},
+    )
+    assert first.json()["status"] == "session_started"
+
+    # Router B: fresh instance, no in-memory dedup state of its own — but
+    # the same durable recorder as router A.
+    calls_b = _Calls()
+    client_b, _, _ = _make_client(calls=calls_b, routing=_Routing(), events=shared_events)
+    second = client_b.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-events-restart", "EventType": "answered", "Called": "+919"},
+    )
+    assert second.json()["status"] == "duplicate"
+    assert calls_b.created is None  # router B never re-created the call
 
 
 # ── 7. Session lifecycle ──────────────────────────────────────────────────────

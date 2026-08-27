@@ -148,3 +148,73 @@ class InternalPhoneRoutingClient:
             raise InternalApiError("Internal phone routing API request failed") from exc
         route = PhoneRoute.model_validate(response.json())
         return route.tenant_id, route.agent_id
+
+
+# ── Phase 6: durable event/job recording ──────────────────────────────────────
+
+
+class EventCreation(BaseModel):
+    event_type: str
+    provider_call_id: str | None = None
+    tenant_id: str | None = None
+    call_id: str | None = None
+    payload: dict | None = None
+
+
+class EventsClient:
+    """Client for services/api's internal job/event API
+    (/internal/v1/events) — the durable, restart-surviving idempotency
+    guarantee exotel_routes.py uses in place of its old in-memory dedup set.
+    Same auth/error-wrapping convention as InternalCallsClient above."""
+
+    def __init__(self, base_url: str, client: httpx.AsyncClient | None = None) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._client = client
+
+    async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        url = self._base_url + path
+        kwargs = _with_internal_auth(kwargs)
+        try:
+            if self._client is not None:
+                response = await self._client.request(method, url, **kwargs)
+            else:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    response = await client.request(method, url, **kwargs)
+            return response
+        except httpx.HTTPError as exc:
+            raise InternalApiError("Internal events API request failed") from exc
+
+    async def record(
+        self,
+        *,
+        provider_call_id: str,
+        event_type: str,
+        tenant_id: str | None = None,
+        call_id: str | None = None,
+        payload: dict | None = None,
+    ) -> bool:
+        """Durably records one event. Returns True if this is a genuine
+        duplicate of a previously-recorded event (same provider_call_id +
+        event_type) — callers must not repeat any side effect in that case.
+
+        Keyword-argument signature (not a single EventCreation object) so
+        this satisfies exotel_routes.py's EventRecorder Protocol exactly —
+        the same calling convention as CallStore.set()/get() above.
+        """
+        event = EventCreation(
+            provider_call_id=provider_call_id,
+            event_type=event_type,
+            tenant_id=tenant_id,
+            call_id=call_id,
+            payload=payload,
+        )
+        response = await self._request(
+            "POST",
+            "/internal/v1/events",
+            json=event.model_dump(mode="json", exclude_none=True),
+        )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise InternalApiError("Internal events API request failed") from exc
+        return bool(response.json().get("duplicate", False))

@@ -311,11 +311,19 @@ def _register_exotel_router() -> None:
         raise ValueError("EXOTEL_WEBHOOK_TOKEN is not set")
 
     from exotel_routes import build_exotel_router  # noqa: PLC0415
-    from internal_calls import InternalCallsClient, InternalPhoneRoutingClient  # noqa: PLC0415
+    from internal_calls import (  # noqa: PLC0415
+        EventsClient,
+        InternalCallsClient,
+        InternalPhoneRoutingClient,
+    )
 
     settings = _ExotelConfig(webhook_token=token)
     internal_api_url = os.environ.get("INTERNAL_API_URL", "http://api:8000")
     calls = InternalCallsClient(base_url=internal_api_url)
+    # Phase 6: the real, durable idempotency guarantee (services/api's
+    # call_jobs table) — see exotel_routes.py::EventRecorder's docstring for
+    # why this replaced the router's old in-memory dedup set.
+    events = EventsClient(base_url=internal_api_url)
 
     call_store: _RedisCallStore | None = None
     if _shared_redis is not None:
@@ -334,7 +342,9 @@ def _register_exotel_router() -> None:
     else:
         routing = InternalPhoneRoutingClient(internal_api_url)
 
-    app.include_router(build_exotel_router(session_manager, settings, calls, routing, call_store))
+    app.include_router(
+        build_exotel_router(session_manager, settings, calls, routing, call_store, events)
+    )
     logger.info(
         "Exotel callback router registered at /telephony/exotel/callback (internal_api=%s)",
         internal_api_url,

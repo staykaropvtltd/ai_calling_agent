@@ -308,8 +308,19 @@ services:
     restart: unless-stopped
 
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      # Queue wake-up signal only — PostgreSQL (owned exclusively by the api
+      # service) is where job state actually lives; the worker never opens
+      # its own DB connection (see services/worker/src/main.py's module
+      # docstring), so no DATABASE_URL is wired here.
       REDIS_URL: ${REDIS_URL}
+
+      # Durable job state: create/claim/complete/fail/reap, all through
+      # services/api's internal job API.
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:8000}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      # The one real internal integration contract this repo defines
+      # (services/integration-service's /internal/v1/process).
+      INTEGRATION_SERVICE_URL: ${INTEGRATION_SERVICE_URL:-http://integration-service:8002}
 
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
 
@@ -317,9 +328,11 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-debug}
 
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      integration-service:
         condition: service_healthy
 
     networks:
@@ -347,8 +360,13 @@ services:
     restart: unless-stopped
 
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      # No DATABASE_URL: this service owns no PostgreSQL connection of its
+      # own (Constraint #1/#2 — application data stays owned by the api
+      # service); Redis is used only for its own /health check.
       REDIS_URL: ${REDIS_URL}
+      # Shared secret required by /internal/v1/process (same mechanism as
+      # services/api's /internal/v1/* — see src/main.py::verify_internal_token).
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
 
       INTEGRATION_SERVICE_PORT: ${INTEGRATION_SERVICE_PORT:-8002}
 
@@ -359,8 +377,6 @@ services:
       - "127.0.0.1:8002:8002"
 
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
 

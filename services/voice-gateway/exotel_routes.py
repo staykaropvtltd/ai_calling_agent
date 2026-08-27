@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING, Annotated, Protocol
 from uuid import uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
-from internal_calls import CallCreation, CallFinalization, InternalApiError, InternalCalls
+from internal_calls import (
+    CallCreation,
+    CallFinalization,
+    InternalApiError,
+    InternalCalls,
+)
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 if TYPE_CHECKING:
@@ -53,6 +58,57 @@ class _DictCallStore:
         self._store.pop(provider_call_id, None)
 
 
+class EventRecorder(Protocol):
+    """Phase 6 — durable idempotency for one webhook event.
+
+    Replaces the in-memory (provider_call_id, event_type) set this router
+    used to keep as its only dedup guard: that set is lost on every gateway
+    restart, so a webhook retried after a restart (which Exotel, like most
+    telephony providers, will do on a failure/timeout) could be processed a
+    second time. record() must return True for a genuine duplicate — the
+    caller must not repeat any side effect (call creation/finalization,
+    session mutation) when it does.
+    """
+
+    async def record(
+        self,
+        *,
+        provider_call_id: str,
+        event_type: str,
+        tenant_id: str | None = None,
+        call_id: str | None = None,
+        payload: dict | None = None,
+    ) -> bool: ...
+
+
+class _InMemoryEventRecorder:
+    """Non-durable fallback used only when no real EventRecorder is wired in
+    (existing tests/direct router construction, or a dev run without
+    services/api reachable). NOT authoritative — this dedup state is lost on
+    restart, exactly the gap a real (HTTP-backed) EventRecorder exists to
+    close. Kept only so existing callers of build_exotel_router() that don't
+    pass events= continue to work unmodified.
+    """
+
+    def __init__(self) -> None:
+        self._seen: set[tuple[str, str]] = set()
+
+    async def record(
+        self,
+        *,
+        provider_call_id: str,
+        event_type: str,
+        tenant_id: str | None = None,
+        call_id: str | None = None,
+        payload: dict | None = None,
+    ) -> bool:
+        key = (provider_call_id, event_type)
+        if key in self._seen:
+            return True
+        self._seen.add(key)
+        return False
+
+
 class ExotelCallback(BaseModel):
     provider_call_id: str = Field(min_length=1)
     event: str = Field(min_length=1)
@@ -86,10 +142,11 @@ def build_exotel_router(
     calls: InternalCalls,
     routing: PhoneRouting | None = None,
     call_store: CallStore | None = None,
+    events: EventRecorder | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/telephony/exotel", tags=["Exotel"])
-    handled_events: set[tuple[str, str]] = set()
     _store: CallStore = call_store if call_store is not None else _DictCallStore()
+    _events: EventRecorder = events if events is not None else _InMemoryEventRecorder()
 
     @router.api_route("/callback", methods=["GET", "POST"])
     async def callback(
@@ -133,13 +190,32 @@ def build_exotel_router(
                 detail="Invalid request body",
             ) from exc
 
-        key = (payload.provider_call_id, payload.event.lower())
-        if key in handled_events:
+        # Phase 6: the durable event record is now the *authoritative*
+        # idempotency guarantee (not the in-memory set this used to be —
+        # that state didn't survive a gateway restart, so a webhook retried
+        # after one could be processed twice). A real EventRecorder backs
+        # this with a database-level unique constraint; failing to reach it
+        # must not silently fall through to reprocessing, so this fails
+        # closed with 503 (same pattern as the calls.create/finalize
+        # failures below) rather than risk a duplicate side effect.
+        try:
+            is_duplicate = await _events.record(
+                provider_call_id=payload.provider_call_id,
+                event_type=payload.event.lower(),
+                payload={
+                    "dialed_number": payload.dialed_number,
+                    "call_status": payload.call_status,
+                },
+            )
+        except InternalApiError as exc:
+            raise HTTPException(
+                status_code=503, detail="durable event recording unavailable"
+            ) from exc
+        if is_duplicate:
             return {
                 "status": "duplicate",
                 "call_id": _store.get(payload.provider_call_id) or "",
             }
-        handled_events.add(key)
 
         if payload.event.lower() in {"connected", "start", "answered", "started"}:
             if routing is None:

@@ -12,18 +12,18 @@ FROM python:3.12-slim AS builder
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Install system build dependencies required by some Python packages
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        gcc \
-        libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 # Create virtual environment
 RUN python -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
-# (no extra Python deps required for worker placeholder)
+# Phase 6: redis (queue) + httpx (internal job/integration API clients) +
+# pydantic (response models) — all pure-Python/prebuilt-wheel, no system
+# build toolchain (gcc/libpq-dev) needed. The worker never opens its own
+# PostgreSQL connection (see src/main.py's module docstring — job state
+# lives in services/api's PostgreSQL, reached only through its internal
+# HTTP API), so no Postgres client library belongs here either.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 
 # -------------------------------------------
@@ -34,12 +34,6 @@ FROM python:3.12-slim AS runtime
 # Prevent Python from writing .pyc files & buffering stdout
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
-
-# Install runtime-only system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        libpq5 \
-    && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment from builder (preserves layer caching)
 COPY --from=builder /venv /venv
@@ -60,6 +54,9 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Worker service does not expose an HTTP port — runs background jobs only.
-# No HEALTHCHECK — health is determined by process liveness & job queues.
+# No Docker HEALTHCHECK: there is no HTTP surface to probe. Operational
+# health is instead observed through structured stdout logging (startup
+# checks, per-job outcomes) and services/api's job table itself (a worker
+# that stopped processing shows up as jobs no longer leaving 'queued').
 
 CMD ["python", "-m", "src.main"]
