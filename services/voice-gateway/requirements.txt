@@ -3,3 +3,9 @@ httpx>=0.28.1
 pipecat-ai[websocket]==1.7.0
 uvicorn[standard]==0.30.6
 redis==5.0.8
+
+# Phase 5 — local/offline STT + TTS providers (no external API credentials
+# available in this environment; see stt_provider.py / tts_provider.py).
+faster-whisper==1.2.1
+pyttsx3==2.99
+numpy>=1.26

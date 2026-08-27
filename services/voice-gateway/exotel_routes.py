@@ -57,6 +57,10 @@ class ExotelCallback(BaseModel):
     provider_call_id: str = Field(min_length=1)
     event: str = Field(min_length=1)
     dialed_number: str | None = None
+    # Exotel's documented StatusCallback carries the actual outcome here
+    # (completed/failed/busy/no-answer) separately from EventType, which is
+    # only ever "terminal" or "answered" — see translate_exotel_fields.
+    call_status: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -65,7 +69,13 @@ class ExotelCallback(BaseModel):
             return {
                 "provider_call_id": value.get("CallSid"),
                 "event": value.get("EventType"),
-                "dialed_number": value.get("Called"),
+                # Exotel's documented field for the dialed/called number is
+                # `To` (StatusCallback) / lowercase `to` (V3 JSON). `Called`
+                # was this project's original, never-sandbox-verified guess —
+                # accepted too rather than dropped, since it's unconfirmed
+                # which the real configured callback actually sends.
+                "dialed_number": value.get("To") or value.get("to") or value.get("Called"),
+                "call_status": value.get("Status") or value.get("status"),
             }
         return value
 
@@ -81,26 +91,41 @@ def build_exotel_router(
     handled_events: set[tuple[str, str]] = set()
     _store: CallStore = call_store if call_store is not None else _DictCallStore()
 
-    @router.post("/callback")
+    @router.api_route("/callback", methods=["GET", "POST"])
     async def callback(
         request: Request,
         x_exotel_webhook_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, str]:
-        if not x_exotel_webhook_token or not hmac.compare_digest(
-            x_exotel_webhook_token, settings.webhook_token
-        ):
+        # Exotel's Passthru applet (the documented mechanism for this
+        # integration style) delivers a GET with the payload as a query
+        # string, not a POST body — and documents no custom-header auth
+        # mechanism at all, meaning a header-only check would reject every
+        # real callback outright. Accept the token via the header (kept for
+        # StatusCallback-style POST delivery, and in case a header can be
+        # configured) OR a `token` query param (the realistic option for a
+        # Passthru URL, since Exotel can't attach custom headers there).
+        token = x_exotel_webhook_token or request.query_params.get("token")
+        if not token or not hmac.compare_digest(token, settings.webhook_token):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="invalid Exotel callback authentication",
             )
 
-        content_type = request.headers.get("content-type", "")
+        # Query params first (covers GET+query-string delivery outright, and
+        # a URL-embedded token for POST too), then merge in a body if present
+        # — never overriding a query param with an empty/absent body field.
+        raw: dict = dict(request.query_params)
+        raw.pop("token", None)
         try:
-            if "application/x-www-form-urlencoded" in content_type:
-                form = await request.form()
-                raw: dict = dict(form)
-            else:
-                raw = await request.json()
+            if request.method == "POST":
+                content_type = request.headers.get("content-type", "")
+                if "application/x-www-form-urlencoded" in content_type:
+                    form = await request.form()
+                    raw.update({k: v for k, v in dict(form).items() if v not in (None, "")})
+                elif content_type.startswith("application/json"):
+                    body = await request.json()
+                    if isinstance(body, dict):
+                        raw.update({k: v for k, v in body.items() if v not in (None, "")})
             payload = ExotelCallback.model_validate(raw)
         except (ValueError, ValidationError) as exc:
             raise HTTPException(
@@ -152,13 +177,22 @@ def build_exotel_router(
             _store.set(payload.provider_call_id, call_id)
             return {"status": "session_started", "call_id": call_id}
 
-        if payload.event.lower() in {"completed", "failed", "disconnected"}:
+        # "terminal" is Exotel's actual documented EventType for call end (the
+        # original "completed"/"failed"/"disconnected" values are kept too —
+        # unconfirmed which this project's real configured callback sends).
+        # When it's "terminal", the outcome (success vs failure) is carried
+        # separately in Status/call_status, not in EventType itself.
+        if payload.event.lower() in {"completed", "failed", "disconnected", "terminal"}:
             call_id = _store.get(payload.provider_call_id)
             if not call_id:
                 return {"status": "ignored", "call_id": ""}
-            end_reason = (
-                "provider_failure" if payload.event.lower() == "failed" else "caller_hangup"
-            )
+            call_status = (payload.call_status or "").lower()
+            is_failure = payload.event.lower() == "failed" or call_status in {
+                "failed",
+                "busy",
+                "no-answer",
+            }
+            end_reason = "provider_failure" if is_failure else "caller_hangup"
             try:
                 await calls.finalize(
                     call_id,

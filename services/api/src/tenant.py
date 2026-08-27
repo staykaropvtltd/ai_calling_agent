@@ -85,3 +85,22 @@ async def get_internal_service_db(db: AsyncSession = Depends(get_db)) -> AsyncSe
     layer before RLS scoping is meaningful here at all.
     """
     return await _set_tenant_context(db, _ALL_TENANTS_SENTINEL)
+
+
+async def get_login_db(db: AsyncSession = Depends(get_db)) -> AsyncSession:
+    """For POST /auth/login only.
+
+    Login has to find an admin_users row by email before any tenant is
+    known — there is no JWT yet to read a tenant from, and the row's own
+    tenant_id is exactly what this lookup is trying to discover. Without this,
+    the tenant_isolation policy on admin_users (correctly) shows zero rows to
+    a plain get_db() connection, so no DB-backed (non-bootstrap) user could
+    ever log in against a real RLS-enforced database — confirmed live: the
+    lookup query still filters on the caller-supplied email, so this grants
+    visibility to search by email, not to read arbitrary cross-tenant data.
+    Same cross-tenant-sentinel reasoning as get_internal_service_db above:
+    this is the trusted entry point that *establishes* tenant identity, not a
+    route that forgot to scope itself. Every route after login uses the
+    resulting JWT's tenant_id via get_tenant_scoped_db instead.
+    """
+    return await _set_tenant_context(db, _ALL_TENANTS_SENTINEL)

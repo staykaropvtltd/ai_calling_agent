@@ -7,7 +7,8 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import redis
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,7 @@ from src.auth import (
 from src.config import (
     API_ADMIN_EMAIL,
     API_ADMIN_FULL_NAME,
+    API_CORS_ORIGINS,
     API_PASSWORD,
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
     REDIS_URL,
@@ -32,6 +34,7 @@ from src.database import engine, get_db
 from src.models import Caller, User
 from src.routers.admin import router as admin_router
 from src.routers.internal import router as internal_router
+from src.tenant import get_login_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,6 +64,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Staykaro API", version="0.3.0", lifespan=lifespan)
+
+# API_CORS_ORIGINS is documented in .env.example for exactly this — without
+# it, a browser-based client (apps/admin-dashboard, apps/client-dashboard)
+# calling this API's own origin directly (not through nginx's same-origin
+# /api/ path) is blocked by the browser regardless of whether its JWT is
+# valid. Explicit origin allowlist, never a wildcard, since Authorization
+# headers are involved. No-op (no CORS headers at all) when unconfigured.
+if API_CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=API_CORS_ORIGINS,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 app.include_router(admin_router)
 app.include_router(internal_router)
 
@@ -161,7 +179,7 @@ class TokenResponse(BaseModel):
 
 
 @app.get("/health")
-async def health(db: AsyncSession = Depends(get_db)) -> dict:
+async def health(response: Response, db: AsyncSession = Depends(get_db)) -> dict:
     checks: dict[str, str] = {}
 
     try:
@@ -179,9 +197,21 @@ async def health(db: AsyncSession = Depends(get_db)) -> dict:
             logger.warning("Health Redis check failed: %s", exc)
             checks["redis"] = "unreachable"
     else:
+        # Redis is an optional dependency (session persistence only) — absent
+        # by deliberate configuration, not a failure, so it must not flip the
+        # HTTP status code below the way an actual "unreachable" does.
         checks["redis"] = "not_configured"
 
-    overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
+    # db unreachable or a configured-but-failing redis are real outages; a
+    # non-2xx status here is what Docker's HEALTHCHECK (`curl -f`, which only
+    # inspects the status code, never the JSON body) and any `depends_on:
+    # condition: service_healthy` actually key off — returning 200 with
+    # "status": "degraded" in the body previously made both blind to a real
+    # database/Redis outage.
+    is_healthy = checks["db"] == "ok" and checks["redis"] != "unreachable"
+    if not is_healthy:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    overall = "ok" if is_healthy else "degraded"
     return {"status": overall, "service": "staykaro-api", "version": "0.3.0", **checks}
 
 
@@ -222,7 +252,7 @@ async def keepalive(db: AsyncSession = Depends(get_db)) -> dict:
 
 
 @app.post("/auth/login", response_model=TokenResponse, tags=["auth"])
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_login_db)) -> TokenResponse:
     # NK-05: admin_users is the real credential store — password_hash is
     # bcrypt, never plaintext (Database Design §2). API_ADMIN_EMAIL/API_PASSWORD
     # is kept only as a break-glass bootstrap login for the very first deploy,

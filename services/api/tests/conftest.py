@@ -15,6 +15,7 @@ os.environ["API_USERNAME"] = "admin"
 os.environ["API_PASSWORD"] = "test-admin-password"
 os.environ["API_ADMIN_EMAIL"] = "admin@staykaro.com"
 os.environ["API_ADMIN_FULL_NAME"] = "Test Admin"
+os.environ["INTERNAL_API_TOKEN"] = "test-internal-api-token-not-for-production"
 
 from datetime import UTC, datetime, timedelta  # noqa: E402
 
@@ -34,6 +35,7 @@ from src.main import app  # noqa: E402
 _TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 _JWT_SECRET = "test-secret-key-not-for-production-only"
 _JWT_ALG = "HS256"
+INTERNAL_API_TOKEN = "test-internal-api-token-not-for-production"
 
 
 def _make_token(role: str) -> str:
@@ -76,7 +78,15 @@ async def api_client(db_session: AsyncSession):
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    # /internal/v1/* requires this header (src/routers/internal.py). Setting
+    # it as a default here means the existing internal-API business-logic
+    # tests (create/get/finalize/phone-routes) don't need per-call changes;
+    # test_internal_auth.py exercises the missing/wrong-token paths directly.
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Internal-API-Token": INTERNAL_API_TOKEN},
+    ) as client:
         yield client
     app.dependency_overrides.clear()
 

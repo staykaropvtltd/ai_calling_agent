@@ -2,20 +2,51 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import INTERNAL_API_TOKEN
 from src.models import Call, PhoneNumberRoute
 from src.tenant import get_internal_service_db
 
 logger = logging.getLogger("staykaro.internal")
 
-router = APIRouter(prefix="/internal/v1", tags=["internal"])
+
+async def verify_internal_token(
+    x_internal_api_token: Annotated[str | None, Header()] = None,
+) -> None:
+    """Shared-secret guard for the service-to-service /internal/v1/* surface.
+
+    These routes have no JWT/user identity to authenticate (see
+    get_internal_service_db) — without this, any caller reachable on the
+    Docker network (or through a misconfigured public proxy — see
+    infrastructure/nginx/nginx*.conf's explicit block on this prefix) could
+    create/read/finalize call records for any tenant with zero credentials.
+    Empty/unset INTERNAL_API_TOKEN fails closed: every request is rejected,
+    never accidentally left open.
+    """
+    if (
+        not INTERNAL_API_TOKEN
+        or not x_internal_api_token
+        or not hmac.compare_digest(x_internal_api_token, INTERNAL_API_TOKEN)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid or missing internal API token",
+        )
+
+
+router = APIRouter(
+    prefix="/internal/v1",
+    tags=["internal"],
+    dependencies=[Depends(verify_internal_token)],
+)
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
