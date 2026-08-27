@@ -96,7 +96,24 @@ def test_decode_access_token_expired_rejected():
 
 def test_decode_access_token_invalid_signature_rejected():
     token, _ = security.create_access_token(user_id=1, tenant_id="t1", role="agent")
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    header_b64, payload_b64, sig_b64 = token.split(".")
+
+    # Flip the FIRST character of the signature, not the last character of
+    # the whole token. A 32-byte HS256 signature's unpadded base64 encoding
+    # ends in a partial 3-byte group, so the token's very last character
+    # carries 2 "don't care" bits that pad out that final group rather than
+    # encoding any real signature byte. Swapping token[-1] between 'A' (index
+    # 0) and 'B' (index 1) only changes those padding bits — value-for-value
+    # identical characters differ solely in bits base64 discards on decode —
+    # so roughly 1 time in 16 (whenever the real last char is 'A'), the
+    # "tampered" signature decodes to byte-identical bytes and verification
+    # spuriously succeeds, making this test flaky rather than a real
+    # tamper check (reproduced directly: token ending in 'A', flipped to
+    # 'B', decoded to the exact same signature bytes via PyJWT). The first
+    # signature character sits in a complete 3-byte group, so any
+    # substitution there deterministically changes the decoded bytes.
+    flipped_char = "A" if sig_b64[0] != "A" else "B"
+    tampered = f"{header_b64}.{payload_b64}.{flipped_char}{sig_b64[1:]}"
 
     with pytest.raises(security.InvalidTokenError):
         security.decode_access_token(tampered)
