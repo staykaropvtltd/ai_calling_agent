@@ -1,0 +1,6 @@
+# Shell scripts are executed inside Linux containers/VPS hosts and must
+# always have LF line endings, regardless of the contributor's platform or
+# git core.autocrlf setting. CRLF here breaks the `#!/bin/sh` shebang with
+# "exec: no such file or directory" when the file is copied into a Docker
+# image (confirmed with services/api/docker-entrypoint.sh on Windows).
+*.sh text eol=lf

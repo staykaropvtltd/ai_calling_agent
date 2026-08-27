@@ -170,6 +170,13 @@ jobs:
           python-version: "3.12"
           cache: pip          # caches pip packages across runs
 
+      # tests/test_stt_tts_providers.py exercises the real local TTS engine
+      # (services/voice-gateway/tts_provider.py's LocalPyttsx3TTSProvider),
+      # same as services/voice-gateway/Dockerfile's runtime stage — pyttsx3
+      # has no working synthesis backend on Linux without this installed.
+      - name: Install espeak-ng (pyttsx3's Linux TTS backend)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends espeak-ng
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt \

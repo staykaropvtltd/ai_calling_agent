@@ -2,15 +2,30 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Protocol
 
 import httpx
 from pydantic import BaseModel
 
+# services/api's /internal/v1/* now requires this shared secret (see
+# src/routers/internal.py::verify_internal_token) — must match INTERNAL_API_TOKEN
+# on the api service exactly. Read directly from the environment rather than a
+# shared config module since these are separate deployable services.
+_INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")
+
 
 class InternalApiError(RuntimeError):
     pass
+
+
+def _with_internal_auth(kwargs: dict) -> dict:
+    if _INTERNAL_API_TOKEN:
+        headers = dict(kwargs.get("headers") or {})
+        headers["X-Internal-API-Token"] = _INTERNAL_API_TOKEN
+        kwargs["headers"] = headers
+    return kwargs
 
 
 class CallCreation(BaseModel):
@@ -50,6 +65,7 @@ class InternalCallsClient:
 
     async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         url = self._base_url + path
+        kwargs = _with_internal_auth(kwargs)
         try:
             if self._client is not None:
                 response = await self._client.request(method, url, **kwargs)
@@ -111,6 +127,7 @@ class InternalPhoneRoutingClient:
 
     async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         url = self._base_url + path
+        kwargs = _with_internal_auth(kwargs)
         try:
             if self._client is not None:
                 response = await self._client.request(method, url, **kwargs)

@@ -21,6 +21,7 @@ Postgres service and never will run this file. Run manually with a live stack:
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 
 import pytest
 
@@ -216,6 +217,28 @@ async def test_cross_tenant_update_is_rejected(app_conn, two_tenants):
             )
 
 
+async def test_cross_tenant_delete_is_rejected(app_conn, two_tenants):
+    """A tenant's DELETE cannot target another tenant's row. Unlike INSERT/
+    UPDATE (WITH CHECK raises InsufficientPrivilegeError), DELETE is governed
+    by USING alone: the row is simply not visible to the DELETE, so it
+    reports zero rows affected rather than raising — assert both that outcome
+    and that the row genuinely survives."""
+    async with app_conn.transaction():
+        await _set_tenant(app_conn, str(two_tenants["tenant_a"]))
+        result = await app_conn.execute(
+            "DELETE FROM call_requests WHERE id = $1", two_tenants["call_b"]
+        )
+        assert result == "DELETE 0"
+
+    # Confirm as tenant B that its own row is untouched.
+    async with app_conn.transaction():
+        await _set_tenant(app_conn, str(two_tenants["tenant_b"]))
+        row = await app_conn.fetchrow(
+            "SELECT id FROM call_requests WHERE id = $1", two_tenants["call_b"]
+        )
+        assert row is not None
+
+
 async def test_tenant_context_survives_a_mid_request_commit(app_conn, two_tenants):
     """Regression test for the actual bug hit building this: routers/admin.py
     does add() -> commit() -> refresh() in one handler. A transaction-scoped
@@ -259,3 +282,134 @@ async def test_tenant_context_is_cleared_by_explicit_reset(app_conn, two_tenants
         [two_tenants["call_a"], two_tenants["call_b"]],
     )
     assert rows_after_reset == []
+
+
+# ── Phase 3 — `calls` table (SH-03 call/session records, distinct from the
+# legacy `call_requests` table exercised above) ────────────────────────────
+#
+# Same RLS policy shape (tenant_isolation on df467b3bdd3f), but calls.tenant_id
+# is already text (no ::text cast needed) and calls.call_id is the voice
+# gateway's own UUID string, not an autoincrement int — a real, separate proof
+# that RLS holds for the table Phase 3's internal API and voice gateway
+# actually write to, not just the legacy /call endpoint's table.
+
+
+@pytest.fixture
+async def two_tenant_calls():
+    admin = await _connect_or_skip(_SUPERUSER_DSN)
+    await _require_rls_migrated(admin)
+
+    tenant_a = await admin.fetchval(
+        "INSERT INTO clients (name, slug) VALUES ($1, $2) RETURNING id",
+        "RLS Calls Tenant A",
+        f"rls-calls-a-{os.getpid()}",
+    )
+    tenant_b = await admin.fetchval(
+        "INSERT INTO clients (name, slug) VALUES ($1, $2) RETURNING id",
+        "RLS Calls Tenant B",
+        f"rls-calls-b-{os.getpid()}",
+    )
+    call_a = f"rls-call-a-{os.getpid()}"
+    call_b = f"rls-call-b-{os.getpid()}"
+    now = datetime.now(UTC)
+    await admin.execute(
+        "INSERT INTO calls (call_id, tenant_id, agent_id, status, started_at) "
+        "VALUES ($1, $2, $3, 'active', $4)",
+        call_a,
+        str(tenant_a),
+        "agent-a",
+        now,
+    )
+    await admin.execute(
+        "INSERT INTO calls (call_id, tenant_id, agent_id, status, started_at) "
+        "VALUES ($1, $2, $3, 'active', $4)",
+        call_b,
+        str(tenant_b),
+        "agent-b",
+        now,
+    )
+
+    try:
+        yield {
+            "tenant_a": tenant_a,
+            "tenant_b": tenant_b,
+            "call_a": call_a,
+            "call_b": call_b,
+        }
+    finally:
+        await admin.execute(
+            "DELETE FROM calls WHERE call_id = ANY($1::text[])", [call_a, call_b]
+        )
+        await admin.execute(
+            "DELETE FROM clients WHERE id = ANY($1::int[])", [tenant_a, tenant_b]
+        )
+        await admin.close()
+
+
+async def test_calls_table_tenant_sees_only_its_own_call(app_conn, two_tenant_calls):
+    await _set_tenant(app_conn, str(two_tenant_calls["tenant_a"]))
+    rows = await app_conn.fetch("SELECT call_id FROM calls")
+    assert {r["call_id"] for r in rows} == {two_tenant_calls["call_a"]}
+
+
+async def test_calls_table_cross_tenant_read_returns_nothing(app_conn, two_tenant_calls):
+    await _set_tenant(app_conn, str(two_tenant_calls["tenant_a"]))
+    row = await app_conn.fetchrow(
+        "SELECT call_id FROM calls WHERE call_id = $1", two_tenant_calls["call_b"]
+    )
+    assert row is None
+
+
+async def test_calls_table_cross_tenant_finalize_affects_nothing(app_conn, two_tenant_calls):
+    """The exact operation routers/internal.py::finalize_call performs
+    (UPDATE ... SET ended_at/status), attempted by the wrong tenant."""
+    async with app_conn.transaction():
+        await _set_tenant(app_conn, str(two_tenant_calls["tenant_a"]))
+        result = await app_conn.execute(
+            "UPDATE calls SET status = 'completed', ended_at = now() WHERE call_id = $1",
+            two_tenant_calls["call_b"],
+        )
+        assert result == "UPDATE 0"
+
+    async with app_conn.transaction():
+        await _set_tenant(app_conn, str(two_tenant_calls["tenant_b"]))
+        row = await app_conn.fetchrow(
+            "SELECT status, ended_at FROM calls WHERE call_id = $1", two_tenant_calls["call_b"]
+        )
+        assert row["status"] == "active"
+        assert row["ended_at"] is None
+
+
+async def test_calls_table_cross_tenant_insert_is_rejected(app_conn, two_tenant_calls):
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+        async with app_conn.transaction():
+            await _set_tenant(app_conn, str(two_tenant_calls["tenant_a"]))
+            await app_conn.execute(
+                "INSERT INTO calls (call_id, tenant_id, agent_id, status, started_at) "
+                "VALUES ($1, $2, $3, 'active', now())",
+                f"rls-call-forged-{os.getpid()}",
+                str(two_tenant_calls["tenant_b"]),
+                "agent-x",
+            )
+
+
+async def test_calls_table_no_tenant_context_fails_closed(app_conn, two_tenant_calls):
+    rows = await app_conn.fetch(
+        "SELECT call_id FROM calls WHERE call_id = ANY($1::text[])",
+        [two_tenant_calls["call_a"], two_tenant_calls["call_b"]],
+    )
+    assert rows == []
+
+
+async def test_calls_table_all_tenants_sentinel_sees_both(app_conn, two_tenant_calls):
+    """The internal API's get_internal_service_db uses exactly this sentinel
+    — matches how the voice gateway is trusted to read/write across tenants."""
+    await _set_tenant(app_conn, _ALL_TENANTS_SENTINEL)
+    rows = await app_conn.fetch(
+        "SELECT call_id FROM calls WHERE call_id = ANY($1::text[])",
+        [two_tenant_calls["call_a"], two_tenant_calls["call_b"]],
+    )
+    assert {r["call_id"] for r in rows} == {
+        two_tenant_calls["call_a"],
+        two_tenant_calls["call_b"],
+    }

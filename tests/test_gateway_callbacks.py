@@ -25,8 +25,10 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 # Make services/voice-gateway modules importable (exotel_routes, internal_calls, dev_routing).
 _VG = str((Path(__file__).parent.parent / "services" / "voice-gateway").resolve())
@@ -34,6 +36,7 @@ if _VG not in sys.path:
     sys.path.insert(0, _VG)
 
 from exotel_routes import build_exotel_router  # noqa: E402
+from voice_pipeline import build_voice_router  # noqa: E402
 
 # services/api/tests/conftest.py imports `from src.main import app` during collection,
 # placing services/api/src/main into sys.modules under the name "src.main".  A direct
@@ -722,6 +725,103 @@ def test_redis_call_store_redis_error_is_handled_gracefully():
     store.delete("x")  # does not raise
 
 
+# ── 10. Phase 4 — Exotel's documented real field/event names ───────────────
+# developer.exotel.com's StatusCallback reference and Pipecat's own Exotel
+# integration guide (checked directly, not assumed) both give `To` for the
+# dialed number and `terminal`/`Status` for call end — not this project's
+# original `Called`/`completed`|`failed`|`disconnected` guess. Both forms
+# are accepted (see translate_exotel_fields) since it's unconfirmed which
+# this project's actual configured callback sends without a real sandbox.
+
+
+def test_json_start_accepts_documented_to_field():
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-to-1", "EventType": "answered", "To": "+919"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "session_started"
+    assert calls.created.tenant_id == "tenant-1"
+
+
+def test_terminal_event_with_completed_status_finalizes_as_caller_hangup():
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing())
+    client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-term-1", "EventType": "answered", "To": "+919"},
+    )
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-term-1", "EventType": "terminal", "Status": "completed"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "session_cleaned"
+    assert calls.finalized[1].end_reason == "caller_hangup"
+
+
+def test_terminal_event_with_failed_status_finalizes_as_provider_failure():
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing())
+    client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-term-2", "EventType": "answered", "To": "+919"},
+    )
+    r = client.post(
+        "/telephony/exotel/callback",
+        headers=_AUTH_HDR,
+        json={"CallSid": "exo-term-2", "EventType": "terminal", "Status": "no-answer"},
+    )
+    assert r.status_code == 200
+    assert calls.finalized[1].end_reason == "provider_failure"
+
+
+def test_callback_accepts_get_with_query_string():
+    """Exotel's Passthru applet — the documented mechanism for this
+    integration style — delivers a GET with the payload as a query string,
+    not a POST body."""
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing())
+    r = client.get(
+        "/telephony/exotel/callback",
+        params={
+            "token": _TOKEN,
+            "CallSid": "exo-get-1",
+            "EventType": "answered",
+            "To": "+919",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "session_started"
+
+
+def test_callback_query_param_token_accepted_without_header():
+    """Passthru URLs can't carry custom headers — a `token` query param on
+    the configured callback URL is the realistic auth mechanism."""
+    calls = _Calls()
+    client, sessions, _ = _make_client(calls=calls, routing=_Routing())
+    r = client.post(
+        f"/telephony/exotel/callback?token={_TOKEN}",
+        json={"CallSid": "exo-qtok-1", "EventType": "answered", "To": "+919"},
+    )
+    assert r.status_code == 200
+
+
+def test_callback_wrong_query_token_and_no_header_rejected():
+    client, _, _ = _make_client(routing=_Routing())
+    r = client.post(
+        "/telephony/exotel/callback?token=wrong",
+        json={"CallSid": "exo-qtok-2", "EventType": "answered", "To": "+919"},
+    )
+    assert r.status_code == 401
+
+
 # ── 9. Voice WebSocket endpoint (SH-03) ─────────────────────────────────────────
 # Exercises the real production app (_GW_MAIN.app), not an isolated router —
 # this is what proves the WebSocket handler and the Exotel callback router
@@ -729,23 +829,75 @@ def test_redis_call_store_redis_error_is_handled_gracefully():
 
 
 def test_voice_websocket_route_is_registered():
+    # A pre-existing session (as the Exotel callback or internal API would
+    # create) is required to connect since the Phase 4 unresolved-call_id
+    # rejection landed — see test_voice_websocket_rejects_unknown_call_id_by_default.
+    call_id = "test-ws-route"
+    _GW_MAIN.session_manager.create(call_id, tenant_id="t", agent_id="a")
     client = TestClient(_GW_MAIN.app)
-    with client.websocket_connect("/ws/test-ws-route"):
+    with client.websocket_connect(f"/ws/{call_id}"):
         pass
 
 
-def test_voice_websocket_creates_and_removes_session():
-    """Connecting to /ws/{call_id} creates a session; disconnecting removes it."""
+def test_voice_websocket_rejects_unknown_call_id_by_default():
+    """Phase 4: /ws/{call_id} is reachable from the public internet (Exotel
+    connects here directly), so a call_id with no session already created via
+    an authenticated path (Exotel callback or the internal API) must be
+    rejected, not silently turned into a free, unauthenticated way to create
+    live session state for any caller-chosen call_id. _GW_MAIN.app is built
+    with EXOTEL_DEV_ROUTING unset (see module setup above), i.e. the
+    production default: allow_unresolved_sessions=False."""
     client = TestClient(_GW_MAIN.app)
-    call_id = "test-ws-lifecycle"
+    call_id = "test-ws-unresolved-rejected"
 
-    with client.websocket_connect(f"/ws/{call_id}"):
-        session = _GW_MAIN.session_manager.get(call_id)
-        assert session is not None
-        assert session["call_id"] == call_id
-        assert session["status"] == "active"
+    # close() before accept() means TestClient raises on connect itself, not
+    # on a subsequent receive — there's no accepted connection to enter.
+    with pytest.raises(WebSocketDisconnect) as exc_info, client.websocket_connect(f"/ws/{call_id}"):
+        pass
+    assert exc_info.value.code == 4404
 
     assert _GW_MAIN.session_manager.get(call_id) is None
+
+
+def test_voice_websocket_dev_flag_allows_fallback_session():
+    """The documented dev/test convenience (connect without any prior
+    callback) still works when explicitly opted into via
+    allow_unresolved_sessions=True (wired to EXOTEL_DEV_ROUTING in
+    src/main.py) — verified here against an isolated router, not _GW_MAIN.app,
+    so it doesn't depend on env state at module-import time."""
+    class _NullSTT:
+        async def transcribe(self, audio: bytes, sample_rate: int) -> str:
+            return ""
+
+    class _NullAI:
+        async def generate_response(self, turns) -> str:
+            return ""
+
+    class _NullTTS:
+        async def synthesize(self, text: str):
+            return b"", 8000
+
+    sessions = _Sessions()
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(
+        build_voice_router(
+            sessions,
+            stt_provider=_NullSTT(),
+            ai_provider=_NullAI(),
+            tts_provider=_NullTTS(),
+            allow_unresolved_sessions=True,
+        )
+    )
+    client = TestClient(fastapi_app)
+    call_id = "test-ws-dev-flag-fallback"
+
+    with client.websocket_connect(f"/ws/{call_id}"):
+        session = sessions.get(call_id)
+        assert session is not None
+        assert session["tenant_id"] == "unknown"
+        assert session["status"] == "active"
+
+    assert sessions.get(call_id) is None
 
 
 def test_voice_websocket_reuses_session_created_by_callback():

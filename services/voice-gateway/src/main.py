@@ -9,7 +9,7 @@ import os
 from dataclasses import dataclass
 
 import redis as _redis_lib
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,8 +21,34 @@ app = FastAPI(title="StayKaro Voice Gateway", version="0.2.0")
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "staykaro-voice-gateway"}
+async def health(response: Response) -> dict[str, str]:
+    # `session_manager` (module global, built further down) is looked up at
+    # call time, not at route-definition time, so this is safe even though
+    # it's assigned later in this same module.
+    #
+    # Same fix as services/api/src/main.py::health: a static "ok" here means
+    # Docker's HEALTHCHECK (and any depends_on: condition: service_healthy)
+    # can never detect a Redis outage, even though Redis is this service's
+    # only durable session store (SH-03). Redis being unconfigured is a
+    # deliberate degraded-but-functional mode (in-memory-only sessions), not
+    # a failure, so only a configured-but-unreachable Redis flips the status.
+    redis_status = "not_configured"
+    if session_manager.redis is not None:
+        try:
+            session_manager.redis.ping()
+            redis_status = "ok"
+        except _redis_lib.RedisError as exc:
+            logger.warning("Health Redis check failed: %s", exc)
+            redis_status = "unreachable"
+
+    is_healthy = redis_status != "unreachable"
+    if not is_healthy:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return {
+        "status": "ok" if is_healthy else "degraded",
+        "service": "staykaro-voice-gateway",
+        "redis": redis_status,
+    }
 
 
 @app.get("/")
@@ -142,6 +168,27 @@ class _GatewaySessionManager:
             with contextlib.suppress(_redis_lib.RedisError):
                 self._r.delete(self._key(call_id))
 
+    def add_turn(self, call_id: str, role: str, text: str) -> None:
+        """Phase 5: append one conversation turn to the session's own state.
+
+        Per the Phase 5 design, conversation history lives in this Redis
+        session (the existing source of active-call state), not a new store
+        and not PostgreSQL — call_turns (services/api/src/models.py) is a
+        later ticket's (SH-11) table, not written here.
+        """
+        from datetime import UTC, datetime
+
+        session = self.get(call_id)
+        if session is None:
+            return
+        turns = session.get("turns", [])
+        turns.append({"role": role, "text": text, "at": datetime.now(UTC).isoformat()})
+        session["turns"] = turns
+        self._mem[call_id] = session
+        if self._r is not None:
+            with contextlib.suppress(_redis_lib.RedisError):
+                self._r.set(self._key(call_id), json.dumps(session), ex=3600)
+
 
 _PROVIDER_CALL_KEY_PREFIX = "voice_gateway:provider_call:"
 _PROVIDER_CALL_TTL = 86400  # 24 hours
@@ -213,10 +260,40 @@ else:
 
 session_manager = _GatewaySessionManager(redis_client=_shared_redis)
 
+# Phase 5 — STT/AI/TTS providers, built once at import time (not per-call):
+# the local Whisper model load alone is a ~15-20s one-time cost that must not
+# repeat on every WebSocket connection. No STT/AI/TTS API credentials
+# (DEEPGRAM_API_KEY / GROQ_API_KEY / OPENAI_API_KEY — all wired into
+# docker-compose.yml but empty in this environment) are available, so these
+# are the local/offline implementations behind each Protocol; a cloud
+# provider is a drop-in replacement here, nowhere else.
+from ai_provider import LocalRuleBasedAIProvider  # noqa: E402
+from stt_provider import LocalWhisperSTTProvider  # noqa: E402
+from tts_provider import LocalPyttsx3TTSProvider  # noqa: E402
 from voice_pipeline import build_voice_router  # noqa: E402
 
-app.include_router(build_voice_router(session_manager))
-logger.info("Voice WebSocket router registered at /ws/{call_id}")
+_stt_provider = LocalWhisperSTTProvider()
+_ai_provider = LocalRuleBasedAIProvider()
+_tts_provider = LocalPyttsx3TTSProvider()
+
+# Same flag _register_exotel_router() below reads for the dev routing stub —
+# both mean "no real Exotel/routing backing this call, dev/test only". A
+# call_id with no session already created via an authenticated path
+# (Exotel callback or the internal API) is rejected unless this is set.
+_ws_allow_unresolved = os.environ.get("EXOTEL_DEV_ROUTING", "").lower() in ("1", "true", "yes")
+app.include_router(
+    build_voice_router(
+        session_manager,
+        stt_provider=_stt_provider,
+        ai_provider=_ai_provider,
+        tts_provider=_tts_provider,
+        allow_unresolved_sessions=_ws_allow_unresolved,
+    )
+)
+logger.info(
+    "Voice WebSocket router registered at /ws/{call_id} (allow_unresolved_sessions=%s)",
+    _ws_allow_unresolved,
+)
 
 
 # ── Router registration ───────────────────────────────────────────────────────
