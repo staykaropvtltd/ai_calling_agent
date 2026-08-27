@@ -12,11 +12,12 @@ FROM python:3.12-slim AS builder
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Install system build dependencies required by some Python packages
+# fastapi/uvicorn/redis are all pure-Python or prebuilt-wheel — no C
+# toolchain (gcc/libpq-dev) needed. This service owns no PostgreSQL
+# connection of its own (Constraint #1/#2 — see src/main.py's module
+# docstring), so no Postgres client library belongs here either.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        gcc \
-        libpq-dev \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -42,7 +43,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
-        libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment from builder (preserves layer caching)

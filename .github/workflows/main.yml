@@ -183,11 +183,20 @@ jobs:
                       -r services/api/requirements.txt \
                       -r services/api/requirements-test.txt \
                       -r services/voice-gateway/requirements.txt \
+                      -r services/worker/requirements.txt \
+                      -r services/integration-service/requirements.txt \
                       pytest pytest-cov
 
+      # services/worker/tests and services/integration-service/tests (Phase
+      # 6) load their modules under private names rather than pytest.ini's
+      # shared pythonpath, to avoid colliding with services/api's own `src`
+      # package — see pytest.ini's comment — so no path/env changes are
+      # needed here beyond installing their dependencies above and adding
+      # them to this test command.
       - name: Run tests with coverage
         run: |
           pytest app/tests/ services/api/tests/ tests/ \
+                 services/worker/tests/ services/integration-service/tests/ \
             --tb=short \
             --cov=app \
             --cov=src \

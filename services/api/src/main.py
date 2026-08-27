@@ -34,6 +34,7 @@ from src.database import engine, get_db
 from src.models import Caller, User
 from src.routers.admin import router as admin_router
 from src.routers.internal import router as internal_router
+from src.routers.jobs import router as jobs_router
 from src.tenant import get_login_db
 
 logging.basicConfig(
@@ -81,6 +82,7 @@ if API_CORS_ORIGINS:
 
 app.include_router(admin_router)
 app.include_router(internal_router)
+app.include_router(jobs_router)
 
 # ── Request logging middleware ─────────────────────────────────────────────────
 
