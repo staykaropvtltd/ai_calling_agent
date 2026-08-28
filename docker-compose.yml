@@ -405,6 +405,56 @@ services:
     profiles:
       - all
 
+  # ==========================================
+  # Admin Dashboard — Next.js (NH-06/07/08)
+  # Owner: Nihal
+  # ==========================================
+  admin-dashboard:
+    build:
+      context: ./apps/admin-dashboard
+      dockerfile: Dockerfile
+      args:
+        # Next.js inlines NEXT_PUBLIC_* into the client bundle at build time —
+        # this must be a build arg, not a runtime `environment:` entry, or the
+        # browser bundle would silently keep whatever value was baked in at
+        # image-build time regardless of what's set here.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost/api}
+
+    container_name: staykaro-admin-dashboard
+    restart: unless-stopped
+
+    # Exposed directly (matching API_CORS_ORIGINS' reserved localhost:3000 in
+    # .env.example) so `npm run dev` outside Docker and this container can
+    # both be reached the same way in local dev; nginx also proxies /admin/
+    # for the same-origin path in both dev and prod (infrastructure/nginx).
+    ports:
+      - "127.0.0.1:3000:3000"
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-qO-",
+          "http://localhost:3000/admin/api/health"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    networks:
+      - staykaro-network
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    profiles:
+      - all
+
 
 # ==========================================
 # Persistent Volumes

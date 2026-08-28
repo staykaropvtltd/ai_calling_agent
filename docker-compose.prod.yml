@@ -37,11 +37,16 @@ services:
         max-file: "5"
 
   # No external port in production — only accessible inside Docker network.
+  # `!override` is required, not plain `ports: []`: Compose's default merge
+  # for list-type keys is concatenation, so a bare `[]` here would add zero
+  # entries on top of the base file's port mapping rather than clearing it —
+  # found while wiring admin-dashboard's own `ports: []` below and verifying
+  # it with `docker compose config` (base ports were still present).
   postgres:
-    ports: []
+    ports: !override []
 
   redis:
-    ports: []
+    ports: !override []
 
   api:
     logging:
@@ -65,7 +70,15 @@ services:
         max-file: "5"
 
   integration-service:
-    ports: []   # not public-facing; route through nginx when needed
+    ports: !override []   # not public-facing; route through nginx when needed
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  admin-dashboard:
+    ports: !override []   # not public-facing; nginx proxies /admin/ (see nginx.prod.conf)
     logging:
       driver: "json-file"
       options:
