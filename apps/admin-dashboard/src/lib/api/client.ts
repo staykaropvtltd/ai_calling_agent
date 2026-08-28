@@ -63,7 +63,12 @@ client.interceptors.response.use(
       return client(original);
     } catch {
       clearTokens();
-      window.location.href = "/login";
+      // This runs inside an axios interceptor, outside React's render tree —
+      // no useRouter() available here, so a raw navigation is the only option.
+      // Bypasses Next's basePath-aware router, so "/admin" (next.config.js)
+      // must be spelled out explicitly.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.href = "/admin/login";
       return Promise.reject(error);
     } finally {
       isRefreshing = false;
@@ -77,7 +82,7 @@ client.interceptors.response.use(
 const TOKEN_KEY = "sk_access";
 const REFRESH_KEY = "sk_refresh";
 
-function getAccessToken() {
+export function getAccessToken() {
   return typeof window !== "undefined" ? sessionStorage.getItem(TOKEN_KEY) : null;
 }
 
