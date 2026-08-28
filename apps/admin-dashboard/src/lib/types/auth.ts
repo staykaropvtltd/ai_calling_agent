@@ -11,6 +11,19 @@ export interface AuthUser {
   permissions: string[];
 }
 
+// Raw shape actually returned by GET /auth/me — services/api/src/main.py's
+// MeResponse.tenant_id is the JWT's numeric client_id, not a string. getMe()
+// maps this to AuthUser so every tenant_id in this app is consistently a
+// string, matching /admin/tenants' TenantResponse.tenant_id.
+export interface MeResponseRaw {
+  user_id: string;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  tenant_id: number | null;
+  permissions: string[];
+}
+
 export interface TokenResponse {
   access_token: string;
   refresh_token: string;
