@@ -431,12 +431,16 @@ services:
       - "127.0.0.1:3000:3000"
 
     healthcheck:
+      # 127.0.0.1, not localhost: this Alpine image resolves "localhost" to
+      # ::1 first, and the Next.js server only accepts IPv4 connections —
+      # confirmed by hand (a hostname-based check gets "connection refused"
+      # while the app is actually up and serving fine).
       test:
         [
           "CMD",
           "wget",
           "-qO-",
-          "http://localhost:3000/admin/api/health"
+          "http://127.0.0.1:3000/admin/api/health"
         ]
       interval: 30s
       timeout: 10s

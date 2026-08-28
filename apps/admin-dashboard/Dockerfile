@@ -43,7 +43,11 @@ EXPOSE 3000
 
 # basePath (/admin) applies to every route the Next server handles,
 # including local requests — the healthcheck path must include it too.
+# Must be 127.0.0.1, not localhost: this Alpine image resolves "localhost"
+# to ::1 first, but the Next server only accepts IPv4 connections, so a
+# hostname-based check gets "connection refused" even though the app is
+# up and serving fine on 127.0.0.1 (confirmed by hand — see PR notes).
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=40s \
-  CMD wget -qO- http://localhost:3000/admin/api/health || exit 1
+  CMD wget -qO- http://127.0.0.1:3000/admin/api/health || exit 1
 
 CMD ["node", "server.js"]
