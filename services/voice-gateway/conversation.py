@@ -205,4 +205,6 @@ class TTSProcessor(FrameProcessor):
             logger.warning("TTS failed, caller gets no audio for this response: %s", exc)
             return
 
-        await self.push_frame(OutputAudioRawFrame(audio=audio, sample_rate=sample_rate, num_channels=1))
+        await self.push_frame(
+            OutputAudioRawFrame(audio=audio, sample_rate=sample_rate, num_channels=1)
+        )

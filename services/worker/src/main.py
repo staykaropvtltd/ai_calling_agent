@@ -42,7 +42,9 @@ logger = logging.getLogger("staykaro-worker")
 
 REDIS_URL = os.environ.get("REDIS_URL", "")
 INTERNAL_API_URL = os.environ.get("INTERNAL_API_URL", "http://api:8000")
-INTEGRATION_SERVICE_URL = os.environ.get("INTEGRATION_SERVICE_URL", "http://integration-service:8002")
+INTEGRATION_SERVICE_URL = os.environ.get(
+    "INTEGRATION_SERVICE_URL", "http://integration-service:8002"
+)
 
 # Redis is only the wake-up hint (see module docstring) — this key holds
 # job_ids pushed by services/api right after a job is durably created.

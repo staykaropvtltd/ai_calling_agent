@@ -35,13 +35,21 @@ def build_engine(url: str) -> AsyncEngine:
     else:
         connect_args = {}
 
+    is_sqlite = url.startswith("sqlite")
+    pool_kwargs: dict = (
+        {}
+        if is_sqlite
+        else {
+            "pool_size": 5,
+            "max_overflow": 10,
+            "pool_pre_ping": True,
+            "pool_recycle": 1800,
+        }
+    )
     return create_async_engine(
         url,
         connect_args=connect_args,
-        pool_size=5,
-        max_overflow=10,
-        pool_pre_ping=True,
-        pool_recycle=1800,
+        **pool_kwargs,
         echo=False,
     )
 

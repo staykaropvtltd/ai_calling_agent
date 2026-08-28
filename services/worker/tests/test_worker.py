@@ -156,7 +156,9 @@ def test_jobs_client_fail_sends_error_and_retry_flag():
 def test_jobs_client_list_eligible_parses_events():
     def handler(request: httpx.Request) -> httpx.Response:
         assert dict(request.url.params).get("limit") == "10"
-        return httpx.Response(200, json={"events": [_job(job_id="a").model_dump(), _job(job_id="b").model_dump()]})
+        return httpx.Response(
+            200, json={"events": [_job(job_id="a").model_dump(), _job(job_id="b").model_dump()]}
+        )
 
     results = _jobs_client(handler).list_eligible(["queued", "retrying"], limit=10)
     assert [j.job_id for j in results] == ["a", "b"]

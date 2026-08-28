@@ -7,9 +7,11 @@ export interface Tenant {
   slug: string;
   plan: TenantPlan;
   status: TenantStatus;
-  contact_email: string;
-  max_concurrent_calls: number;
-  created_at: string; // ISO8601
+  // nullable=True in DB (clients.contact_email); Optional[str] in TenantResponse.
+  contact_email: string | null;
+  // server_default=10 in DB but no nullable=False; Optional[int] in TenantResponse.
+  max_concurrent_calls: number | null;
+  created_at: string; // ISO8601; server_default=now() — always set in practice
   updated_at: string;
 }
 

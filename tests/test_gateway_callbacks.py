@@ -1014,6 +1014,7 @@ def test_voice_websocket_dev_flag_allows_fallback_session():
     allow_unresolved_sessions=True (wired to EXOTEL_DEV_ROUTING in
     src/main.py) — verified here against an isolated router, not _GW_MAIN.app,
     so it doesn't depend on env state at module-import time."""
+
     class _NullSTT:
         async def transcribe(self, audio: bytes, sample_rate: int) -> str:
             return ""

@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { RoleGuard } from "../../../../lib/auth/RoleGuard";
 import { useCreateUser } from "../../../../lib/hooks/useUsers";
+import { useTenantsQuery } from "../../../../lib/hooks/useTenants";
 import { Card } from "../../../../components/Card";
 import { ErrorBanner } from "../../../../components/ErrorBanner";
 import { buttonClass, FormField, inputClass, secondaryButtonClass } from "../../../../components/FormField";
@@ -28,6 +29,8 @@ function NewUserForm() {
   const [role, setRole] = useState<CreatableRole>("agent");
   const [tenantId, setTenantId] = useState("");
   const [password, setPassword] = useState("");
+
+  const { data: tenantsData, isLoading: tenantsLoading } = useTenantsQuery({ per_page: 100 });
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -81,14 +84,24 @@ function NewUserForm() {
               <option value="agent">Agent</option>
             </select>
           </FormField>
-          <FormField label="Tenant ID" htmlFor="tenant_id">
-            <input
+          <FormField label="Tenant" htmlFor="tenant_id">
+            <select
               id="tenant_id"
               required
               value={tenantId}
               onChange={(e) => setTenantId(e.target.value)}
               className={inputClass}
-            />
+              disabled={tenantsLoading}
+            >
+              <option value="">
+                {tenantsLoading ? "Loading tenants…" : "Select a tenant…"}
+              </option>
+              {tenantsData?.data.map((t) => (
+                <option key={t.tenant_id} value={t.tenant_id}>
+                  {t.name} ({t.slug})
+                </option>
+              ))}
+            </select>
           </FormField>
           <FormField label="Password (optional)" htmlFor="password">
             <input
