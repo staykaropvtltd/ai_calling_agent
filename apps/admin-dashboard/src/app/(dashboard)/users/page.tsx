@@ -48,9 +48,11 @@ export default function UsersPage() {
     <div>
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-slate-900">Users</h1>
-        <Link href="/users/new" className={buttonClass}>
-          New user
-        </Link>
+        {isSuperAdmin ? (
+          <Link href="/users/new" className={buttonClass}>
+            New user
+          </Link>
+        ) : null}
       </div>
 
       <div className="mb-4 flex flex-wrap gap-3">

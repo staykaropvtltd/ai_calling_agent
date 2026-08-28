@@ -12,6 +12,15 @@ export function ErrorBanner({ error }: { error: unknown }) {
 function extractMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const detail = error.response?.data?.detail;
+    // FastAPI validation errors (422) return detail as an array of {msg, loc, type} objects.
+    if (Array.isArray(detail)) {
+      const msgs = detail
+        .map((d: unknown) =>
+          typeof d === "object" && d !== null && "msg" in d ? String((d as Record<string, unknown>).msg) : null,
+        )
+        .filter(Boolean);
+      if (msgs.length > 0) return msgs.join("; ");
+    }
     if (typeof detail === "string") return detail;
     if (error.response?.status === 401) return "Session expired. Please log in again.";
     if (error.message) return error.message;

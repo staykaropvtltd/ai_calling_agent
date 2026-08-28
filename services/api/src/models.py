@@ -51,9 +51,7 @@ class Client(Base):
 
     __table_args__ = (
         CheckConstraint("plan IN ('starter', 'pro', 'enterprise')", name="ck_clients_plan"),
-        CheckConstraint(
-            "status IN ('active', 'suspended', 'inactive')", name="ck_clients_status"
-        ),
+        CheckConstraint("status IN ('active', 'suspended', 'inactive')", name="ck_clients_status"),
     )
 
     users = relationship("User", back_populates="client")
@@ -132,14 +130,15 @@ class Call(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
-        CheckConstraint(
-            "status IN ('active', 'completed', 'failed')", name="ck_calls_status"
-        ),
+        CheckConstraint("status IN ('active', 'completed', 'failed')", name="ck_calls_status"),
         Index("idx_calls_tenant_started", "tenant_id", "started_at"),
     )
 
     turns = relationship(
-        "CallTurn", back_populates="call", cascade="all, delete-orphan", order_by="CallTurn.started_at"
+        "CallTurn",
+        back_populates="call",
+        cascade="all, delete-orphan",
+        order_by="CallTurn.started_at",
     )
     events = relationship("CallEvent", back_populates="call", cascade="all, delete-orphan")
 
@@ -182,7 +181,9 @@ class CallEvent(Base):
     event_id = Column(String(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
     call_id = Column(String(36), ForeignKey("calls.call_id", ondelete="CASCADE"), nullable=False)
     tenant_id = Column(String(255), nullable=False)
-    event_type = Column(String(50), nullable=False)  # barge_in | provider_fallback | stt_failure | ...
+    event_type = Column(
+        String(50), nullable=False
+    )  # barge_in | provider_fallback | stt_failure | ...
     payload = Column(_JSONB, nullable=True)
     occurred_at = Column(DateTime(timezone=True), server_default=func.now())
 

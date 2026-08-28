@@ -48,6 +48,10 @@ class LocalWhisperSTTProvider:
     English only ("tiny.en") — this project does not claim multilingual STT
     support; a real requirement for other languages would need a different
     model or a cloud provider with documented language coverage.
+
+    The Whisper model weights are loaded lazily on the first transcribe() call
+    (or eagerly via preload() at app startup). Construction is cheap so that
+    importing this module never requires faster-whisper to be installed.
     """
 
     def __init__(
@@ -56,14 +60,28 @@ class LocalWhisperSTTProvider:
         device: str = "cpu",
         compute_type: str = "int8",
     ) -> None:
+        self._model_size = model_size
+        self._device = device
+        self._compute_type = compute_type
+        self._model: object | None = None  # populated by _ensure_model()
+
+    def preload(self) -> None:
+        """Eagerly load the Whisper model — call once at application startup to
+        pay the ~15-20s one-time cost before the first live call arrives."""
+        self._ensure_model()
+
+    def _ensure_model(self) -> None:
+        if self._model is not None:
+            return
         try:
             from faster_whisper import WhisperModel
-        except ImportError as exc:  # pragma: no cover - dependency guard
+        except ImportError as exc:
             raise STTError("faster-whisper is not installed") from exc
-
-        logger.info("Loading local Whisper model '%s' (one-time cost)...", model_size)
-        self._model = WhisperModel(model_size, device=device, compute_type=compute_type)
-        logger.info("Whisper model '%s' loaded", model_size)
+        logger.info("Loading local Whisper model '%s' (one-time cost)...", self._model_size)
+        self._model = WhisperModel(
+            self._model_size, device=self._device, compute_type=self._compute_type
+        )
+        logger.info("Whisper model '%s' loaded", self._model_size)
 
     async def transcribe(self, audio: bytes, sample_rate: int) -> str:
         if not audio:
@@ -72,20 +90,20 @@ class LocalWhisperSTTProvider:
             # Defensive: the pipeline is configured to deliver WHISPER_SAMPLE_RATE
             # already (see voice_pipeline.py), so this should never trigger in
             # practice — fail loudly rather than silently mis-transcribe.
-            raise STTError(
-                f"unexpected sample rate {sample_rate}, expected {WHISPER_SAMPLE_RATE}"
-            )
+            raise STTError(f"unexpected sample rate {sample_rate}, expected {WHISPER_SAMPLE_RATE}")
         # Reasonable upper bound so one pathological buffer can't hang a call
         # indefinitely — 30s of audio is already far beyond a normal IVR turn.
         max_bytes = 30 * WHISPER_SAMPLE_RATE * 2
         if len(audio) > max_bytes:
             audio = audio[:max_bytes]
 
+        self._ensure_model()  # no-op on every call after the first
+
         def _run() -> str:
             import numpy as np
 
             samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
-            segments, _info = self._model.transcribe(samples, language="en", vad_filter=False)
+            segments, _info = self._model.transcribe(samples, language="en", vad_filter=False)  # type: ignore[union-attr]
             return " ".join(seg.text for seg in segments).strip()
 
         loop = asyncio.get_running_loop()

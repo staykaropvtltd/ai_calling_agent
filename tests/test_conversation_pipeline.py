@@ -35,12 +35,14 @@ pytestmark = pytest.mark.asyncio
 
 def _loud_audio_frame(n_samples: int = 320) -> InputAudioRawFrame:
     # int16 samples near full-scale -> RMS well above the 0.02 threshold.
-    audio = (b"\xff\x7f" * n_samples)  # 32767 repeated, little-endian
+    audio = b"\xff\x7f" * n_samples  # 32767 repeated, little-endian
     return InputAudioRawFrame(audio=audio, sample_rate=WHISPER_SAMPLE_RATE, num_channels=1)
 
 
 def _silence_frame(n_samples: int = 320) -> InputAudioRawFrame:
-    return InputAudioRawFrame(audio=b"\x00\x00" * n_samples, sample_rate=WHISPER_SAMPLE_RATE, num_channels=1)
+    return InputAudioRawFrame(
+        audio=b"\x00\x00" * n_samples, sample_rate=WHISPER_SAMPLE_RATE, num_channels=1
+    )
 
 
 class _FakeSTT:
@@ -152,7 +154,9 @@ async def test_stt_processor_flushes_on_max_buffer_even_without_silence():
     # more frames than this would trigger additional flushes, which is
     # correct processor behavior, just not what this test is isolating.
     frames = [_loud_audio_frame(n_samples=200)] * 4
-    down, _up = await run_test(proc, frames_to_send=frames, expected_down_frames=[TranscriptionFrame])
+    down, _up = await run_test(
+        proc, frames_to_send=frames, expected_down_frames=[TranscriptionFrame]
+    )
     assert down[0].text == "long utterance"
 
 
@@ -183,7 +187,9 @@ async def test_ai_processor_records_user_and_assistant_turns():
 
     down, _up = await run_test(
         proc,
-        frames_to_send=[TranscriptionFrame(text="hi", user_id="caller", timestamp="t", finalized=True)],
+        frames_to_send=[
+            TranscriptionFrame(text="hi", user_id="caller", timestamp="t", finalized=True)
+        ],
         expected_down_frames=None,
     )
     text_frames = [f for f in down if isinstance(f, TextFrame)]
@@ -204,7 +210,9 @@ async def test_ai_processor_failure_produces_safe_fallback_not_a_crash():
 
     down, _up = await run_test(
         proc,
-        frames_to_send=[TranscriptionFrame(text="hi", user_id="caller", timestamp="t", finalized=True)],
+        frames_to_send=[
+            TranscriptionFrame(text="hi", user_id="caller", timestamp="t", finalized=True)
+        ],
         expected_down_frames=None,
     )
     text_frames = [f for f in down if isinstance(f, TextFrame)]
@@ -233,7 +241,9 @@ async def test_tts_processor_skips_empty_text():
     tts = _FakeTTS()
     proc = TTSProcessor(tts)
 
-    down, _up = await run_test(proc, frames_to_send=[TextFrame(text="   ")], expected_down_frames=[])
+    down, _up = await run_test(
+        proc, frames_to_send=[TextFrame(text="   ")], expected_down_frames=[]
+    )
     assert down == []
     assert tts.seen_text == []
 
@@ -242,5 +252,7 @@ async def test_tts_processor_failure_is_swallowed_not_propagated():
     tts = _FakeTTS(raise_error=True)
     proc = TTSProcessor(tts)
 
-    down, _up = await run_test(proc, frames_to_send=[TextFrame(text="hello")], expected_down_frames=[])
+    down, _up = await run_test(
+        proc, frames_to_send=[TextFrame(text="hello")], expected_down_frames=[]
+    )
     assert down == []

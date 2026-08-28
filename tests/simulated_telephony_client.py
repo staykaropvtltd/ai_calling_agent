@@ -170,9 +170,10 @@ class SimulatedCall:
             if len(self.received_media) > last_seen:
                 last_seen = len(self.received_media)
                 last_growth = asyncio.get_event_loop().time()
-            elif len(self.received_media) > start_count and (
-                asyncio.get_event_loop().time() - last_growth
-            ) >= quiet_for:
+            elif (
+                len(self.received_media) > start_count
+                and (asyncio.get_event_loop().time() - last_growth) >= quiet_for
+            ):
                 break
         return b"".join(self.received_media[start_count:])
 

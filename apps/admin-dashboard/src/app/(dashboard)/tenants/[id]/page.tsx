@@ -123,8 +123,8 @@ function TenantEditForm({ tenant, onSave, onSuspend, isSaving, saveError }: Tena
   const [name, setName] = useState(tenant.name);
   const [plan, setPlan] = useState<TenantPlan>(tenant.plan);
   const [status, setStatus] = useState<TenantStatus>(tenant.status);
-  const [contactEmail, setContactEmail] = useState(tenant.contact_email);
-  const [maxConcurrentCalls, setMaxConcurrentCalls] = useState(tenant.max_concurrent_calls);
+  const [contactEmail, setContactEmail] = useState(tenant.contact_email ?? "");
+  const [maxConcurrentCalls, setMaxConcurrentCalls] = useState(tenant.max_concurrent_calls ?? 10);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();

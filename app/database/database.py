@@ -19,13 +19,23 @@ if DB_SSL_REQUIRED:
     _connect_args["ssl"] = _ssl_ctx
 
 # ── Async engine ──────────────────────────────────────────────────────────────
+# SQLite (test environments) uses StaticPool which rejects pool_size,
+# max_overflow, pool_pre_ping, and pool_recycle — those are PostgreSQL-only.
+_is_sqlite = DATABASE_URL.startswith("sqlite")
+_pool_kwargs: dict = (
+    {}
+    if _is_sqlite
+    else {
+        "pool_size": 5,  # connections held open
+        "max_overflow": 10,  # extra connections allowed under load
+        "pool_pre_ping": True,  # discard stale connections before checkout
+        "pool_recycle": 1800,  # recycle connections every 30 min
+    }
+)
 engine = create_async_engine(
     DATABASE_URL,
     connect_args=_connect_args,
-    pool_size=5,  # connections held open
-    max_overflow=10,  # extra connections allowed under load
-    pool_pre_ping=True,  # discard stale connections before checkout
-    pool_recycle=1800,  # recycle connections every 30 min
+    **_pool_kwargs,
     echo=False,  # set True temporarily to log all SQL
 )
 

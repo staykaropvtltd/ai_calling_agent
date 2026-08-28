@@ -258,9 +258,7 @@ async def test_fail_already_terminal_job_is_idempotent(api_client: AsyncClient) 
     created = (await api_client.post(_BASE, json=_event_payload(max_attempts=1))).json()
     job_id = created["job_id"]
     await api_client.post(f"{_BASE}/{job_id}/claim")
-    first = await api_client.post(
-        f"{_BASE}/{job_id}/fail", json={"error": "final", "retry": True}
-    )
+    first = await api_client.post(f"{_BASE}/{job_id}/fail", json={"error": "final", "retry": True})
     assert first.json()["status"] == "failed"
     second = await api_client.post(
         f"{_BASE}/{job_id}/fail", json={"error": "reported again", "retry": True}
@@ -331,9 +329,7 @@ async def test_list_eligible_returns_only_queued_and_retrying_by_default(
     api_client: AsyncClient,
 ) -> None:
     queued = (await api_client.post(_BASE, json=_event_payload(provider_call_id="p-a"))).json()
-    processing = (
-        await api_client.post(_BASE, json=_event_payload(provider_call_id="p-b"))
-    ).json()
+    processing = (await api_client.post(_BASE, json=_event_payload(provider_call_id="p-b"))).json()
     await api_client.post(f"{_BASE}/{processing['job_id']}/claim")
 
     response = await api_client.get(_BASE)

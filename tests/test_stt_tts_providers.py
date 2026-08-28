@@ -50,6 +50,7 @@ async def stt(tts):
 
     try:
         provider = LocalWhisperSTTProvider(model_size="tiny.en")
+        provider.preload()  # model loading is now lazy; trigger it here to skip cleanly on failure
     except STTError as exc:
         pytest.skip(f"local Whisper model unavailable in this environment: {exc}")
     return provider

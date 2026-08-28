@@ -44,8 +44,7 @@ class AIProvider(Protocol):
 
 
 _GREETING = (
-    "Hello, thank you for calling. This is an automated assistant. "
-    "How can I help you today?"
+    "Hello, thank you for calling. This is an automated assistant. " "How can I help you today?"
 )
 _GOODBYE = "Thank you for calling. Have a great day. Goodbye."
 _FALLBACK = "I'm sorry, I didn't quite understand that. Could you say that again?"
@@ -95,9 +94,7 @@ class LocalRuleBasedAIProvider:
         elif _CONFIRM_PATTERN.search(last):
             response = "Great, thank you for confirming. Is there anything else I can help with?"
         elif _DENY_PATTERN.search(last):
-            response = (
-                "No problem. Could you tell me more about what you'd like to change?"
-            )
+            response = "No problem. Could you tell me more about what you'd like to change?"
         else:
             response = _FALLBACK
 
