@@ -17,7 +17,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger("staykaro.voice-gateway")
 
-app = FastAPI(title="StayKaro Voice Gateway", version="0.2.0")
+
+@contextlib.asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Pre-load the Whisper model before the first live call arrives.
+
+    Catches load failures gracefully so the app still starts in environments
+    where faster-whisper is not installed (development, CI). Production Docker
+    images always have faster-whisper via requirements.txt, so preload()
+    succeeds there and the first call pays no extra latency.
+    """
+    try:
+        _stt_provider.preload()
+    except Exception as exc:
+        logger.warning(
+            "Whisper model not pre-loaded at startup (%s). "
+            "Install faster-whisper (services/voice-gateway/requirements.txt) "
+            "for local STT support.",
+            exc,
+        )
+    yield
+
+
+app = FastAPI(title="StayKaro Voice Gateway", version="0.2.0", lifespan=_lifespan)
 
 
 @app.get("/health")

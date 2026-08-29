@@ -33,14 +33,15 @@ placeholders — this is operator-controlled deployment config, not user
 input, so the same trust boundary as every other env-var-sourced secret in
 this codebase applies.
 """
+
 import os
 from collections.abc import Sequence
 
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = 'df467b3bdd3f'
-down_revision: str | None = '228478a4578e'
+revision: str = "df467b3bdd3f"
+down_revision: str | None = "228478a4578e"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -107,9 +108,7 @@ def upgrade() -> None:
     op.execute(f"GRANT CONNECT ON DATABASE {op.get_bind().engine.url.database} TO {_APP_ROLE}")
     op.execute(f"GRANT USAGE ON SCHEMA public TO {_APP_ROLE}")
     op.execute(f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {_APP_ROLE}")
-    op.execute(
-        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO {_APP_ROLE}"
-    )
+    op.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO {_APP_ROLE}")
 
     for table in _UNSCOPED_APP_TABLES:
         op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {table} TO {_APP_ROLE}")

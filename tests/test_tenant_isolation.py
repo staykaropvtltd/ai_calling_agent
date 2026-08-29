@@ -105,12 +105,8 @@ async def two_tenants():
     try:
         yield {"tenant_a": tenant_a, "tenant_b": tenant_b, "call_a": call_a, "call_b": call_b}
     finally:
-        await admin.execute(
-            "DELETE FROM call_requests WHERE id = ANY($1::int[])", [call_a, call_b]
-        )
-        await admin.execute(
-            "DELETE FROM clients WHERE id = ANY($1::int[])", [tenant_a, tenant_b]
-        )
+        await admin.execute("DELETE FROM call_requests WHERE id = ANY($1::int[])", [call_a, call_b])
+        await admin.execute("DELETE FROM clients WHERE id = ANY($1::int[])", [tenant_a, tenant_b])
         await admin.close()
 
 
@@ -267,9 +263,7 @@ async def test_tenant_context_is_cleared_by_explicit_reset(app_conn, two_tenants
     get_db() does that with RESET in its `finally`. Simulates get_db()'s
     cleanup directly and confirms it actually closes the gap."""
     await _set_tenant(app_conn, str(two_tenants["tenant_a"]))
-    rows = await app_conn.fetch(
-        "SELECT id FROM call_requests WHERE id = $1", two_tenants["call_a"]
-    )
+    rows = await app_conn.fetch("SELECT id FROM call_requests WHERE id = $1", two_tenants["call_a"])
     assert len(rows) == 1
 
     await app_conn.execute("RESET app.current_tenant")
@@ -337,12 +331,8 @@ async def two_tenant_calls():
             "call_b": call_b,
         }
     finally:
-        await admin.execute(
-            "DELETE FROM calls WHERE call_id = ANY($1::text[])", [call_a, call_b]
-        )
-        await admin.execute(
-            "DELETE FROM clients WHERE id = ANY($1::int[])", [tenant_a, tenant_b]
-        )
+        await admin.execute("DELETE FROM calls WHERE call_id = ANY($1::text[])", [call_a, call_b])
+        await admin.execute("DELETE FROM clients WHERE id = ANY($1::int[])", [tenant_a, tenant_b])
         await admin.close()
 
 
@@ -482,9 +472,7 @@ async def two_tenant_jobs():
             "DELETE FROM call_jobs WHERE job_id = ANY($1::text[])",
             [job_a, job_b, job_no_tenant],
         )
-        await admin.execute(
-            "DELETE FROM clients WHERE id = ANY($1::int[])", [tenant_a, tenant_b]
-        )
+        await admin.execute("DELETE FROM clients WHERE id = ANY($1::int[])", [tenant_a, tenant_b])
         await admin.close()
 
 

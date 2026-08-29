@@ -17,6 +17,8 @@ export interface CreateUserRequest {
   full_name: string;
   role: Extract<UserRole, "tenant_admin" | "agent">;
   tenant_id: string;
+  // Optional — backend UserCreate.password (min 8 chars). User cannot log in until set.
+  password?: string;
 }
 
 export interface UpdateUserRequest {

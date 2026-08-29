@@ -68,7 +68,7 @@ client.interceptors.response.use(
       // Bypasses Next's basePath-aware router, so "/admin" (next.config.js)
       // must be spelled out explicitly.
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-      window.location.href = "/admin/login";
+      window.location.href = "/admin/login/";
       return Promise.reject(error);
     } finally {
       isRefreshing = false;

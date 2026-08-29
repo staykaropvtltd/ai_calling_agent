@@ -57,9 +57,7 @@ async def lifespan(app: FastAPI):
             await conn.execute(text("SELECT 1 FROM admin_users LIMIT 1"))
         logger.info("Database schema reachable (migrations applied)")
     except Exception as exc:
-        logger.error(
-            "Database schema check failed — has `alembic upgrade head` been run? %s", exc
-        )
+        logger.error("Database schema check failed — has `alembic upgrade head` been run? %s", exc)
     yield
     await engine.dispose()
 

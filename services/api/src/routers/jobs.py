@@ -79,7 +79,10 @@ def _notify_worker(job_id: str) -> None:
     try:
         _redis.rpush(WORKER_QUEUE_KEY, job_id)
     except redis.RedisError as exc:
-        logger.warning("Failed to push job_id=%s wake-up to Redis (worker will poll instead): %s", job_id, exc)
+        logger.warning(
+            "Failed to push job_id=%s wake-up to Redis (worker will poll instead): %s", job_id, exc
+        )
+
 
 # Error text is persisted (last_error) and may end up in operator-facing
 # tooling later — bounded so a pathological/adversarial error string can't
@@ -204,7 +207,9 @@ async def create_event(
             body.event_type,
             existing.job_id,
         )
-        return EventCreateResponse(duplicate=True, **EventResponse.model_validate(existing).model_dump())
+        return EventCreateResponse(
+            duplicate=True, **EventResponse.model_validate(existing).model_dump()
+        )
 
     await db.refresh(job)
     logger.info("Event recorded: job_id=%s event_type=%s", job.job_id, job.event_type)
@@ -288,7 +293,9 @@ async def claim_event(job_id: str, db: AsyncSession = Depends(get_internal_servi
 
 
 @router.post("/{job_id}/complete", response_model=EventResponse)
-async def complete_event(job_id: str, db: AsyncSession = Depends(get_internal_service_db)) -> CallJob:
+async def complete_event(
+    job_id: str, db: AsyncSession = Depends(get_internal_service_db)
+) -> CallJob:
     """Transitions processing -> completed. Idempotent: completing an
     already-completed job (e.g. the worker's HTTP call succeeded but the
     response was lost, and it retries) is a safe no-op, not an error —
@@ -321,7 +328,9 @@ async def complete_event(job_id: str, db: AsyncSession = Depends(get_internal_se
         current = await db.get(CallJob, job_id, populate_existing=True)
         if current is not None and current.status == "completed":
             return current
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="job state changed concurrently")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="job state changed concurrently"
+        )
     await db.commit()
     await db.refresh(job)
     logger.info("Job completed: job_id=%s", job.job_id)
@@ -388,7 +397,9 @@ async def fail_event(
     job = result.scalar_one_or_none()
     if job is None:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="job state changed concurrently")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="job state changed concurrently"
+        )
     await db.commit()
     await db.refresh(job)
     logger.info(

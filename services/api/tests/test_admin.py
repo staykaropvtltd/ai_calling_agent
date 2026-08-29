@@ -303,9 +303,7 @@ async def test_update_user_password_rotates_login(
     api_client: AsyncClient, super_admin_headers: dict, db_session: AsyncSession
 ):
     """PUT /admin/users/{id} with a new password invalidates the old one."""
-    user = await _create_user(
-        db_session, email="rotate@example.com", password="old-password-1"
-    )
+    user = await _create_user(db_session, email="rotate@example.com", password="old-password-1")
     r = await api_client.put(
         f"/admin/users/{user.id}",
         json={"password": "new-password-1"},

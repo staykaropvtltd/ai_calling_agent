@@ -31,6 +31,7 @@ def verify_password(plain: str, hashed: str) -> bool:
         # Malformed/legacy hash (e.g. empty string) — never a valid match.
         return False
 
+
 # Permissions granted per role, returned by GET /auth/me.
 _ROLE_PERMISSIONS: dict[str, list[str]] = {
     "super_admin": ["tenant:read", "tenant:write", "user:read", "user:write", "call:read"],
