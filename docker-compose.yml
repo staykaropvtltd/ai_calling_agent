@@ -459,6 +459,58 @@ services:
     profiles:
       - all
 
+  # ==========================================
+  # Client Dashboard — Next.js
+  # Tenant-facing app (tenant_admin/agent): place calls, view own users/calls.
+  # ==========================================
+  client-dashboard:
+    build:
+      context: ./apps/client-dashboard
+      dockerfile: Dockerfile
+      args:
+        # Next.js inlines NEXT_PUBLIC_* into the client bundle at build time —
+        # this must be a build arg, not a runtime `environment:` entry, or the
+        # browser bundle would silently keep whatever value was baked in at
+        # image-build time regardless of what's set here.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost/api}
+
+    container_name: staykaro-client-dashboard
+    restart: unless-stopped
+
+    # Exposed directly (matching API_CORS_ORIGINS' reserved localhost:3001 in
+    # .env.example) so `npm run dev` outside Docker and this container can
+    # both be reached the same way in local dev; nginx also proxies /client/
+    # for the same-origin path in both dev and prod (infrastructure/nginx).
+    ports:
+      - "127.0.0.1:3001:3000"
+
+    healthcheck:
+      # 127.0.0.1, not localhost — see admin-dashboard's healthcheck above
+      # for why (Alpine resolves localhost to ::1 first; Next only binds IPv4).
+      test:
+        [
+          "CMD",
+          "wget",
+          "-qO-",
+          "http://127.0.0.1:3000/client/api/health"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    networks:
+      - staykaro-network
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    profiles:
+      - all
+
 
 # ==========================================
 # Persistent Volumes

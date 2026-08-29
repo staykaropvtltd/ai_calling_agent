@@ -247,6 +247,48 @@ jobs:
           NEXT_PUBLIC_API_URL: http://localhost/api
 
   # ──────────────────────────────────────────────────────────────────────────
+  # Job — Frontend (client-dashboard)
+  # Same shape as the admin-dashboard job above — tenant-facing app, separate
+  # Next.js project (apps/client-dashboard).
+  # ──────────────────────────────────────────────────────────────────────────
+  frontend-client:
+    name: "Frontend (client-dashboard)"
+    runs-on: ubuntu-latest
+    needs: [lint]
+
+    defaults:
+      run:
+        working-directory: apps/client-dashboard
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/client-dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (eslint)
+        run: npm run lint
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Unit tests (vitest)
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost/api
+
+  # ──────────────────────────────────────────────────────────────────────────
   # Job 4 — Docker Build Validation
   # Runs in parallel with tests and security (both need lint, not each other).
   # Each service is built independently so a failure names the exact service.
@@ -274,6 +316,7 @@ jobs:
           sed \
             -e 's|http://api:8000|http://127.0.0.1:8000|g' \
             -e 's|http://admin-dashboard:3000|http://127.0.0.1:3000|g' \
+            -e 's|http://client-dashboard:3000|http://127.0.0.1:3000|g' \
             infrastructure/nginx/nginx.conf > /tmp/nginx-ci.conf
           docker run --rm \
             -v /tmp/nginx-ci.conf:/etc/nginx/nginx.conf:ro \
@@ -296,6 +339,7 @@ jobs:
             -e 's|http://api:8000|http://127.0.0.1:8000|g' \
             -e 's|http://voice-gateway:9000|http://127.0.0.1:9000|g' \
             -e 's|http://admin-dashboard:3000|http://127.0.0.1:3000|g' \
+            -e 's|http://client-dashboard:3000|http://127.0.0.1:3000|g' \
             infrastructure/nginx/nginx.prod.conf > /tmp/nginx-prod/nginx.conf
 
           docker run --rm \
@@ -358,3 +402,14 @@ jobs:
             NEXT_PUBLIC_API_URL=http://localhost/api
           cache-from: type=gha,scope=admin-dashboard
           cache-to: type=gha,mode=max,scope=admin-dashboard
+
+      - name: "Build — client-dashboard"
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/client-dashboard
+          file: ./apps/client-dashboard/Dockerfile
+          push: false
+          build-args: |
+            NEXT_PUBLIC_API_URL=http://localhost/api
+          cache-from: type=gha,scope=client-dashboard
+          cache-to: type=gha,mode=max,scope=client-dashboard
