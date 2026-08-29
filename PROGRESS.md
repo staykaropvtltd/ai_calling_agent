@@ -63,10 +63,83 @@ in, NK-06/NK-08 are not.
 | NK-07 | ✅ done (this session) | PostgreSQL RLS — see "NK-07 gotchas" below, there were three real bugs |
 | NK-08 | ⚠️ partial | `tests/test_tenant_isolation.py` covers the DB layer directly; no HTTP-level pen-test suite yet |
 | NK-09–17 | ❌ not started | RAG, billing, audit logging (table exists, nothing writes to it yet), backup/restore |
-| NH-06 | ⚠️ partial | Admin API (clients/users/calls CRUD) done; no dashboard UI |
-| NH-07–18 | ❌ not started | Dashboards, integrations, monitoring, hardening |
+| NH-06 | ✅ done | Admin API (clients/users/calls CRUD); `apps/admin-dashboard` UI built and merged (2026-08-28/29) |
+| NH-07 | ✅ done (2026-08-29) | `apps/client-dashboard` — tenant-facing UI (tenant_admin/agent), see session log below |
+| NH-08 | ⚠️ partial | Both dashboards wired into Compose/nginx/CI; no monitoring/hardening pass yet |
+| NH-09–18 | ❌ not started | Integrations, monitoring, hardening |
 
 ## Session log
+
+### 2026-08-29 — merge Phase 7 admin-dashboard, build client-dashboard, fix POST /call RLS bug
+
+Three things, in order: pulled the latest `origin/main` into
+`feature/admin-dashboard`, built a second frontend for tenant-facing users,
+and fixed a real backend bug the new frontend's error handling surfaced
+immediately once run against a live stack.
+
+**Merge.** `origin/main` had picked up two commits this branch didn't:
+`dc85443` (PR #24, a squash-merge of this same branch's earlier
+admin-dashboard commits) and `1596476` (PR #25, stabilization fixes on top).
+Because #24 was a squash merge, git saw it as unrelated history to this
+branch's own un-squashed commits touching the same files — 5 add/add
+conflicts, all in `apps/admin-dashboard`, all resolved in favor of main's
+newer logic: FastAPI 422 validation-array handling in `ErrorBanner`, the
+"New user" button gated behind `isSuperAdmin`, the tenant `<select>`
+populated from `useTenantsQuery` instead of a bare text input, nullable
+`contact_email`/`max_concurrent_calls` defaults matching the relaxed
+`TenantResponse` schema, and `/admin/login/` with the trailing slash
+`next.config.js`'s `trailingSlash: true` now requires. Verified with
+`typecheck`/`lint`/`test`/`build` post-merge — all green.
+
+**`apps/client-dashboard`.** Tenant-facing counterpart to admin-dashboard,
+for `tenant_admin`/`agent` (not `super_admin`, who gets "access denied" and
+is pointed at `/admin/` instead — same-origin `sessionStorage` means one
+login serves both apps, confirmed by hand). Mirrors admin-dashboard's stack
+(Next.js 16, React Query, Tailwind, vitest) but scoped down to what those
+two roles can actually do server-side: **New call** (`POST /call`, open to
+any authenticated role) plus, `tenant_admin`-only, read-only **Calls** and
+**Users** lists (`/admin/calls`, `/admin/users` — already tenant-scoped by
+`_require_admin`). No tenant or user management — those routes are
+`super_admin`-only, so the UI never offers what the API would 403. Wired
+into `docker-compose.yml` (port 3001, profile `all`), nginx dev/prod
+(`/client/` path routing, same redirect-loop-avoidance pattern as
+`/admin/`), CI (new `frontend-client` job + docker build validation), and
+`.env` templates.
+
+**Bug found and fixed: `POST /call` 500'd for every real (non-bootstrap)
+user.** Caught by running the actual stack (`docker compose --profile all
+up`, real Postgres with NK-07's RLS migration applied) and driving the new
+New Call form in a browser — not by any unit test, since the SQLite suite
+has no RLS to enforce this. Root cause: `make_call` in
+`services/api/src/main.py` used plain `get_db` (no `app.current_tenant`
+session context) and never set `client_id` on the `Caller` row it inserts.
+`call_requests`' `tenant_isolation` policy's `WITH CHECK` requires
+`client_id::text = current_setting('app.current_tenant')`, which a NULL
+`client_id` under an unset (empty-string) tenant context never satisfies —
+confirmed by reproducing with a direct `curl` against the API, independent
+of the frontend, and by reading `staykaro-api`'s logs
+(`asyncpg.exceptions.InsufficientPrivilegeError: new row violates row-level
+security policy for table "call_requests"`). Fix: switched the dependency to
+`get_tenant_scoped_db` (sets that session context from the caller's JWT —
+the cross-tenant sentinel for `super_admin`) and set
+`client_id=user.get("client_id")` explicitly, which is `None` for
+`super_admin` (fine — the sentinel bypasses the check) and the caller's own
+tenant id otherwise (satisfies it). Added `services/api/tests/test_call.py`
+— it can't reproduce the RLS rejection itself (no RLS in SQLite) but does
+guard the actual fix, that `client_id` gets stamped from the token for
+`tenant_admin`/`agent` and stays `None` for `super_admin`. Full backend
+suite (148 tests) and both frontends' suites (17 + 16 tests) pass; verified
+live end-to-end afterward — `curl`'d `/call` against the rebuilt API
+container and confirmed the row landed with the right `client_id` in
+Postgres.
+
+**Non-obvious thing worth knowing:** nginx and the API bake their config/
+code into the image at build time (`COPY`, not a bind mount, in dev) — a
+`docker compose up -d` alone after editing `nginx.conf` or `src/main.py`
+restarts the *old* image. Needs `up -d --build <service>` (confirmed by
+hand: the first `up -d` after adding `client-dashboard` brought back
+25-hour-old containers with none of this session's nginx/api changes in
+them).
 
 ### 2026-08-26 — NK-02, SH-03, NK-05, NK-07 (this session)
 

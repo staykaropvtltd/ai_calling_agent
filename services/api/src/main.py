@@ -35,7 +35,7 @@ from src.models import Caller, User
 from src.routers.admin import router as admin_router
 from src.routers.internal import router as internal_router
 from src.routers.jobs import router as jobs_router
-from src.tenant import get_login_db
+from src.tenant import get_login_db, get_tenant_scoped_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -360,15 +360,22 @@ async def me(user: dict = Depends(get_current_user)) -> MeResponse:
 @app.post("/call", tags=["calls"])
 async def make_call(
     request: CallerRequest,
-    db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_tenant_scoped_db),
+    user: dict = Depends(get_current_user),
 ) -> dict:
+    # call_requests has a tenant_isolation RLS policy (NK-07) whose WITH CHECK
+    # requires client_id::text = current_setting('app.current_tenant') — a row
+    # with client_id left NULL fails that check under a tenant_admin/agent's
+    # own tenant context (super_admin's cross-tenant sentinel bypasses it, so
+    # NULL is only ever fine there). get_tenant_scoped_db sets that session
+    # context to match; client_id must be set here to satisfy it too.
     caller = Caller(
         customer_name=request.customer_name,
         phone_number=request.phone_number,
         hotel_name=request.hotel_name,
         check_in_date=request.check_in_date,
         check_out_date=request.check_out_date,
+        client_id=user.get("client_id"),
     )
     db.add(caller)
     await db.commit()
