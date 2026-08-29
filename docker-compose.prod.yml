@@ -84,3 +84,11 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
+
+  client-dashboard:
+    ports: !override []   # not public-facing; nginx proxies /client/ (see nginx.prod.conf)
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
