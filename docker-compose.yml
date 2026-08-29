@@ -7,6 +7,23 @@
 services:
 
   # ==========================================
+  # One-shot init: fix ownership on the postgres_backups volume
+  # ==========================================
+  # A freshly created named volume is root:root — the postgres process inside
+  # the postgres container runs as uid 999 (confirmed by hand:
+  # `docker exec staykaro-postgres id postgres`) and cannot mkdir/write into a
+  # root-owned mount, which silently breaks archive_command (WAL archiving
+  # fails permission-denied, forever, until this runs). Runs once as root,
+  # chowns to 999:999 to match, then exits; postgres waits for it to finish
+  # successfully before starting.
+  backups-volume-init:
+    image: busybox
+    container_name: staykaro-backups-volume-init
+    command: sh -c "mkdir -p /backups/wal_archive /backups/base && chown -R 999:999 /backups"
+    volumes:
+      - postgres_backups:/backups
+
+  # ==========================================
   # PostgreSQL + pgvector
   # ==========================================
   postgres:
@@ -14,10 +31,31 @@ services:
     container_name: staykaro-postgres
     restart: unless-stopped
 
+    depends_on:
+      backups-volume-init:
+        condition: service_completed_successfully
+
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-staykaro}
       POSTGRES_USER: ${POSTGRES_USER:-staykaro_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
+
+    # NK-17 — continuous WAL archiving, so scripts/backup-db.sh's daily base
+    # backup plus the archived segments give point-in-time recovery (Database
+    # Design §10: "Daily full, continuous WAL"), not just a daily snapshot.
+    # archive_command copies each completed segment into postgres_backups
+    # (mounted below) — a *separate* volume from postgres_data on purpose,
+    # so losing the data volume doesn't also take the WAL archive with it.
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=mkdir -p /backups/wal_archive && test ! -f /backups/wal_archive/%f && cp %p /backups/wal_archive/%f
+      - -c
+      - max_wal_senders=3
 
     # Existing Windows PostgreSQL uses 5432.
     # Windows: localhost:5433
@@ -27,6 +65,7 @@ services:
 
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - postgres_backups:/backups
       - ./infrastructure/docker/postgres-init:/docker-entrypoint-initdb.d:ro
 
     healthcheck:
@@ -519,6 +558,17 @@ volumes:
 
   postgres_data:
     name: staykaro_postgres_data
+    driver: local
+
+  # NK-17 — base backups + WAL archive (scripts/backup-db.sh,
+  # scripts/restore-db.sh). Deliberately a separate volume from postgres_data
+  # so a corrupted/deleted data volume doesn't take the backups with it — in
+  # production this should additionally be synced off-host (Database Design
+  # §10: "stored separately from the production VPS"); that sync step is an
+  # operator/ops decision (destination, credentials) left to deployment
+  # config, not scripted here.
+  postgres_backups:
+    name: staykaro_postgres_backups
     driver: local
 
   redis_data:

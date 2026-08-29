@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -16,6 +17,44 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 logger = logging.getLogger("staykaro.voice-gateway")
+
+
+# ── NH-17 — deployment draining ─────────────────────────────────────────────
+#
+# Infrastructure & Operations Guide §7: "The voice gateway listens for a
+# shutdown signal, immediately stops accepting new calls, lets active calls
+# finish naturally, and only then allows the container to actually stop."
+#
+# uvicorn calls an ASGI app's lifespan shutdown phase (the code after `yield`
+# below) on SIGTERM — that's the hook this uses, rather than a raw
+# signal.signal() handler, so it composes correctly with however uvicorn
+# itself is invoked (single worker here; this whole mechanism is per-process
+# and would need per-worker coordination if that ever changes).
+#
+# A plain module-level int, not an asyncio.Lock-guarded counter: every
+# increment/decrement below runs on the single asyncio event loop thread with
+# no `await` between the read and the write, so each +=1/-=1 is already
+# atomic with respect to other coroutines — nothing can interleave inside a
+# single Python bytecode-level increment on one thread.
+_draining = False
+_active_calls = 0
+
+# How long to wait for in-flight calls to end on their own before giving up
+# and letting the container stop anyway. A phone call can run minutes, not
+# seconds — the uvicorn/Docker Compose default graceful-shutdown windows (a
+# handful of seconds) exist for HTTP request/response cycles, not this.
+_DRAIN_TIMEOUT_SECONDS = int(os.environ.get("VOICE_GATEWAY_DRAIN_TIMEOUT_SECONDS", "300"))
+_DRAIN_POLL_INTERVAL_SECONDS = 2
+
+
+def _on_call_started() -> None:
+    global _active_calls
+    _active_calls += 1
+
+
+def _on_call_ended() -> None:
+    global _active_calls
+    _active_calls -= 1
 
 
 @contextlib.asynccontextmanager
@@ -37,6 +76,31 @@ async def _lifespan(_app: FastAPI):
             exc,
         )
     yield
+
+    # ── Shutdown: drain before letting the process actually stop ───────────
+    global _draining
+    _draining = True
+    logger.info(
+        "Draining: rejecting new /ws/ connections, waiting up to %ss for "
+        "%s active call(s) to finish naturally.",
+        _DRAIN_TIMEOUT_SECONDS,
+        _active_calls,
+    )
+    waited = 0
+    while _active_calls > 0 and waited < _DRAIN_TIMEOUT_SECONDS:
+        await asyncio.sleep(_DRAIN_POLL_INTERVAL_SECONDS)
+        waited += _DRAIN_POLL_INTERVAL_SECONDS
+        logger.info("Draining: %s active call(s) remaining (%ss elapsed)...", _active_calls, waited)
+
+    if _active_calls > 0:
+        logger.warning(
+            "Drain timeout (%ss) reached with %s call(s) still active — "
+            "stopping anyway. These calls will be cut off.",
+            _DRAIN_TIMEOUT_SECONDS,
+            _active_calls,
+        )
+    else:
+        logger.info("Drain complete — no active calls remain.")
 
 
 app = FastAPI(title="StayKaro Voice Gateway", version="0.2.0", lifespan=_lifespan)
@@ -67,9 +131,17 @@ async def health(response: Response) -> dict[str, str]:
     if not is_healthy:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return {
+        # NH-17: still "ok" while draining, deliberately — the process is
+        # healthy and correctly finishing in-flight calls, not failing. A
+        # health-check-aware router should read `draining` to stop routing
+        # *new* calls here without treating the instance as down (which
+        # would be wrong, and would race the drain loop below with whatever
+        # acts on an unhealthy status).
         "status": "ok" if is_healthy else "degraded",
         "service": "staykaro-voice-gateway",
         "redis": redis_status,
+        "draining": _draining,
+        "active_calls": _active_calls,
     }
 
 
@@ -310,6 +382,9 @@ app.include_router(
         ai_provider=_ai_provider,
         tts_provider=_tts_provider,
         allow_unresolved_sessions=_ws_allow_unresolved,
+        is_draining=lambda: _draining,
+        on_call_started=_on_call_started,
+        on_call_ended=_on_call_ended,
     )
 )
 logger.info(

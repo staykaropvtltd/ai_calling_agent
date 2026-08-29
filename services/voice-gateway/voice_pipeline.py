@@ -27,6 +27,7 @@ exercises the real transport/serializer code, not a parallel test-only path.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Protocol
 
 from ai_provider import AIProvider
@@ -62,6 +63,9 @@ def build_voice_router(
     ai_provider: AIProvider,
     tts_provider: TTSProvider,
     allow_unresolved_sessions: bool = False,
+    is_draining: Callable[[], bool] = lambda: False,
+    on_call_started: Callable[[], None] = lambda: None,
+    on_call_ended: Callable[[], None] = lambda: None,
 ) -> APIRouter:
     """allow_unresolved_sessions: dev/test-only escape hatch (wire it to the
     same EXOTEL_DEV_ROUTING flag src/main.py already uses for the routing
@@ -76,11 +80,29 @@ def build_voice_router(
     off in a real deployment (where the flag is unset) while preserving the
     documented dev/test convenience of connecting without a prior callback
     when the flag is explicitly set.
+
+    is_draining / on_call_started / on_call_ended: NH-17 deployment
+    draining hooks (wired to src/main.py's SIGTERM handler). A telephony
+    platform retries a rejected connection against whatever instance is
+    next in rotation, so refusing new connections here is what "stops
+    accepting new calls" (Infrastructure & Operations Guide §7) actually
+    means for a WebSocket endpoint — there is no listen-socket-level
+    equivalent of an HTTP server simply closing its port, since existing
+    calls hold their own already-accepted connections regardless.
     """
     router = APIRouter(tags=["voice"])
 
     @router.websocket("/ws/{call_id}")
     async def voice_websocket(websocket: WebSocket, call_id: str) -> None:
+        if is_draining():
+            # 1013 "Try Again Later" — the standard WS close code for
+            # exactly this: a healthy server that just can't take this
+            # connection right now. Rejected *before* accept() so the
+            # telephony platform sees a clean handshake failure to retry
+            # elsewhere, not a connection that opened and then dropped.
+            await websocket.close(code=1013, reason="server draining for deploy")
+            return
+
         # A session normally already exists here — created by the Exotel
         # "connected" callback (or the internal API, in tests) before the
         # telephony platform opens this audio stream. Checked *before*
@@ -94,76 +116,103 @@ def build_voice_router(
             session_manager.create(call_id=call_id, tenant_id="unknown", agent_id="unknown")
 
         await websocket.accept()
-
-        # Consumes the WS's first (handshake) message(s) to learn Exotel's
-        # own stream_sid/call_sid — required to construct the serializer.
-        # Everything after this point (media/dtmf events) is read by the
-        # transport itself, untouched by this call (see parse_telephony_websocket's
-        # docstring: the underlying receive stream is only ever consumed once).
+        on_call_started()
         try:
-            _transport_type, call_data = await parse_telephony_websocket(websocket)
-            stream_sid = call_data.stream_id or call_id
-            provider_call_sid = call_data.call_id
-        except ValueError as exc:
-            # WS closed before sending a handshake message at all.
-            logger.warning("call_id=%s: no telephony handshake received: %s", call_id, exc)
-            if session_manager.get(call_id) is not None:
-                session_manager.end(call_id)
-                session_manager.remove(call_id)
-            return
-
-        serializer = ExotelFrameSerializer(stream_sid=stream_sid, call_sid=provider_call_sid)
-
-        transport = FastAPIWebsocketTransport(
-            websocket,
-            FastAPIWebsocketParams(
-                audio_in_enabled=True,
-                audio_out_enabled=True,
-                # Whisper's native rate — the serializer resamples Exotel's
-                # 8kHz audio to this automatically (see its own setup()).
-                audio_in_sample_rate=WHISPER_SAMPLE_RATE,
-                serializer=serializer,
-            ),
-        )
-
-        stt = STTProcessor(stt_provider)
-        ai = AIProcessor(ai_provider, session_manager, call_id)
-        tts = TTSProcessor(tts_provider)
-
-        pipeline = Pipeline(
-            [
-                transport.input(),
-                stt,
-                ai,
-                tts,
-                transport.output(),
-            ]
-        )
-
-        worker = PipelineWorker(
-            pipeline,
-            params=PipelineParams(),
-            conversation_id=call_id,
-        )
-
-        # FastAPIWebsocketTransport does not stop the pipeline by itself on a
-        # client disconnect — without this handler runner.run() blocks forever
-        # after the caller hangs up, so the session (and its Redis key) never
-        # gets cleaned up. Cancelling the worker is what lets auto_end (the
-        # WorkerRunner default) return from run() below.
-        @transport.event_handler("on_client_disconnected")
-        async def _on_client_disconnected(_transport, _websocket) -> None:
-            await worker.cancel(reason="client disconnected")
-
-        runner = WorkerRunner(handle_sigint=False)
-        await runner.add_workers(worker)
-
-        try:
-            await runner.run()
+            await _run_call(
+                websocket,
+                call_id,
+                session_manager=session_manager,
+                stt_provider=stt_provider,
+                ai_provider=ai_provider,
+                tts_provider=tts_provider,
+            )
         finally:
-            if session_manager.get(call_id) is not None:
-                session_manager.end(call_id)
-                session_manager.remove(call_id)
-            await transport.cleanup()
+            # Paired unconditionally with on_call_started() above, regardless
+            # of which of _run_call's return paths was taken — NH-17's drain
+            # loop (src/main.py) polls this count down to zero and must never
+            # see it get stuck above zero because one exit path forgot to
+            # decrement.
+            on_call_ended()
 
     return router
+
+
+async def _run_call(
+    websocket: WebSocket,
+    call_id: str,
+    *,
+    session_manager: SessionManager,
+    stt_provider: STTProvider,
+    ai_provider: AIProvider,
+    tts_provider: TTSProvider,
+) -> None:
+    # Consumes the WS's first (handshake) message(s) to learn Exotel's
+    # own stream_sid/call_sid — required to construct the serializer.
+    # Everything after this point (media/dtmf events) is read by the
+    # transport itself, untouched by this call (see parse_telephony_websocket's
+    # docstring: the underlying receive stream is only ever consumed once).
+    try:
+        _transport_type, call_data = await parse_telephony_websocket(websocket)
+        stream_sid = call_data.stream_id or call_id
+        provider_call_sid = call_data.call_id
+    except ValueError as exc:
+        # WS closed before sending a handshake message at all.
+        logger.warning("call_id=%s: no telephony handshake received: %s", call_id, exc)
+        if session_manager.get(call_id) is not None:
+            session_manager.end(call_id)
+            session_manager.remove(call_id)
+        return
+
+    serializer = ExotelFrameSerializer(stream_sid=stream_sid, call_sid=provider_call_sid)
+
+    transport = FastAPIWebsocketTransport(
+        websocket,
+        FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            # Whisper's native rate — the serializer resamples Exotel's
+            # 8kHz audio to this automatically (see its own setup()).
+            audio_in_sample_rate=WHISPER_SAMPLE_RATE,
+            serializer=serializer,
+        ),
+    )
+
+    stt = STTProcessor(stt_provider)
+    ai = AIProcessor(ai_provider, session_manager, call_id)
+    tts = TTSProcessor(tts_provider)
+
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            stt,
+            ai,
+            tts,
+            transport.output(),
+        ]
+    )
+
+    worker = PipelineWorker(
+        pipeline,
+        params=PipelineParams(),
+        conversation_id=call_id,
+    )
+
+    # FastAPIWebsocketTransport does not stop the pipeline by itself on a
+    # client disconnect — without this handler runner.run() blocks forever
+    # after the caller hangs up, so the session (and its Redis key) never
+    # gets cleaned up. Cancelling the worker is what lets auto_end (the
+    # WorkerRunner default) return from run() below.
+    @transport.event_handler("on_client_disconnected")
+    async def _on_client_disconnected(_transport, _websocket) -> None:
+        await worker.cancel(reason="client disconnected")
+
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+
+    try:
+        await runner.run()
+    finally:
+        if session_manager.get(call_id) is not None:
+            session_manager.end(call_id)
+            session_manager.remove(call_id)
+        await transport.cleanup()
