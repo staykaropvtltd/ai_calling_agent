@@ -1,9 +1,11 @@
+import asyncio
 import json
 import logging
+import os
 import re
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Optional
 
 import redis
@@ -13,6 +15,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src import monitoring
 from src.auth import (
     _ROLE_PERMISSIONS,
     create_access_token,
@@ -30,7 +33,7 @@ from src.config import (
     REDIS_URL,
     validate_startup_config,
 )
-from src.database import engine, get_db
+from src.database import async_session_factory, engine, get_db
 from src.models import Caller, User
 from src.routers.admin import router as admin_router
 from src.routers.internal import router as internal_router
@@ -46,6 +49,33 @@ logger = logging.getLogger("staykaro.api")
 # ── App lifespan ──────────────────────────────────────────────────────────────
 
 
+_MONITORING_INTERVAL_SECONDS = int(os.environ.get("MONITORING_INTERVAL_SECONDS", "60"))
+
+
+async def _monitoring_loop() -> None:
+    """NH-18 — periodic alert evaluation, independent of any single request.
+
+    A threshold like "error rate > 5% over 10 minutes" needs to fire even
+    during a quiet period with no incoming traffic to piggyback the check
+    on — this is what makes it monitoring rather than just something GET
+    /metrics happens to compute when asked.
+    """
+    while True:
+        try:
+            await asyncio.sleep(_MONITORING_INTERVAL_SECONDS)
+            async with async_session_factory() as db:
+                checks = await _check_dependencies(db)
+            snap = monitoring.registry.snapshot()
+            monitoring.check_and_notify(snap, db_status=checks["db"], redis_status=checks["redis"])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # A bug in the monitor itself must never take the monitor down —
+            # that's the one failure mode that guarantees nobody finds out
+            # about a real outage either.
+            logger.exception("Monitoring loop iteration failed — will retry next interval.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Schema is owned by Alembic (NK-02, Database Design §9) and applied by
@@ -58,7 +88,12 @@ async def lifespan(app: FastAPI):
         logger.info("Database schema reachable (migrations applied)")
     except Exception as exc:
         logger.error("Database schema check failed — has `alembic upgrade head` been run? %s", exc)
+
+    monitor_task = asyncio.create_task(_monitoring_loop())
     yield
+    monitor_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await monitor_task
     await engine.dispose()
 
 
@@ -101,6 +136,9 @@ async def request_logging(request: Request, call_next):
         elapsed_ms,
     )
     response.headers["X-Request-Id"] = request_id
+    # NH-18 — every request feeds the rolling window GET /metrics and the
+    # periodic alert-evaluation loop (below) both read from.
+    monitoring.registry.record(response.status_code, elapsed_ms)
     return response
 
 
@@ -178,8 +216,10 @@ class TokenResponse(BaseModel):
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
-@app.get("/health")
-async def health(response: Response, db: AsyncSession = Depends(get_db)) -> dict:
+async def _check_dependencies(db: AsyncSession) -> dict[str, str]:
+    """Shared by GET /health and monitoring.py's periodic alert-evaluation
+    loop — one place decides what "db/redis unreachable" means, so the two
+    can never quietly disagree about it."""
     checks: dict[str, str] = {}
 
     try:
@@ -202,6 +242,13 @@ async def health(response: Response, db: AsyncSession = Depends(get_db)) -> dict
         # HTTP status code below the way an actual "unreachable" does.
         checks["redis"] = "not_configured"
 
+    return checks
+
+
+@app.get("/health")
+async def health(response: Response, db: AsyncSession = Depends(get_db)) -> dict:
+    checks = await _check_dependencies(db)
+
     # db unreachable or a configured-but-failing redis are real outages; a
     # non-2xx status here is what Docker's HEALTHCHECK (`curl -f`, which only
     # inspects the status code, never the JSON body) and any `depends_on:
@@ -213,6 +260,32 @@ async def health(response: Response, db: AsyncSession = Depends(get_db)) -> dict
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     overall = "ok" if is_healthy else "degraded"
     return {"status": overall, "service": "staykaro-api", "version": "0.3.0", **checks}
+
+
+@app.get("/metrics", tags=["ops"])
+async def metrics_endpoint(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """NH-18 — current metrics snapshot + dependency health, on demand.
+    super_admin-only: this is operational data (aggregate request/error
+    counts across every tenant), not anything a route elsewhere already
+    treats as tenant-visible."""
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin role required")
+
+    checks = await _check_dependencies(db)
+    snap = monitoring.registry.snapshot()
+    return {
+        "window_seconds": snap.window_seconds,
+        "request_count": snap.request_count,
+        "error_count": snap.error_count,
+        "error_rate": snap.error_rate,
+        "p50_latency_ms": snap.p50_latency_ms,
+        "p95_latency_ms": snap.p95_latency_ms,
+        "db": checks["db"],
+        "redis": checks["redis"],
+    }
 
 
 @app.get("/")

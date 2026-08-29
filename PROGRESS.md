@@ -54,21 +54,169 @@ in, NK-06/NK-08 are not.
 | NK-03 | ✅ done | Redis call sessions |
 | NK-04 | ✅ done | Health/readiness |
 | SH-01 | ✅ done | Exotel adapter |
-| SH-02 | ❌ not started | Twilio adapter |
+| SH-02 | ❌ not started | Twilio adapter — **needs Twilio credentials** to verify against a real sandbox call, even though the adapter code itself doesn't |
 | SH-03 | ✅ done (this session) | Pipecat pipeline unified into production entrypoint |
-| SH-04/06/08 | ❌ not started | Deepgram STT / Groq LLM / TTS — **need API keys from the user** before this can start |
+| SH-04/06/08 | ❌ not started | Deepgram STT / Groq LLM / TTS — **need API keys from the user** before this can start. Note: a local/offline fallback pipeline (Whisper + rule-based AI + pyttsx3, see `services/voice-gateway/src/main.py`) already exists and needs no keys — it's what NH-17's draining work below could actually be end-to-end tested against, not attempted this session |
 | SH-05/07/09/10/11/12/13/14/15/16/17 | ❌ not started | Depend on SH-04/06/08 |
 | NK-05 | ✅ done (this session) | Real DB-backed auth, bcrypt |
-| NK-06 | ⚠️ partial | Role-check dependencies exist (`_require_admin`/`_require_super_admin`); no formal role/permission matrix beyond that |
+| NK-06 | ✅ done (2026-08-29) | `services/api/tests/test_rbac_matrix.py` — exhaustive role × endpoint matrix (90 cases), replacing the old "a couple of tickets check this" coverage |
 | NK-07 | ✅ done (this session) | PostgreSQL RLS — see "NK-07 gotchas" below, there were three real bugs |
-| NK-08 | ⚠️ partial | `tests/test_tenant_isolation.py` covers the DB layer directly; no HTTP-level pen-test suite yet |
-| NK-09–17 | ❌ not started | RAG, billing, audit logging (table exists, nothing writes to it yet), backup/restore |
-| NH-06 | ✅ done | Admin API (clients/users/calls CRUD); `apps/admin-dashboard` UI built and merged (2026-08-28/29) |
-| NH-07 | ✅ done (2026-08-29) | `apps/client-dashboard` — tenant-facing UI (tenant_admin/agent), see session log below |
-| NH-08 | ⚠️ partial | Both dashboards wired into Compose/nginx/CI; no monitoring/hardening pass yet |
-| NH-09–18 | ❌ not started | Integrations, monitoring, hardening |
+| NK-08 | ✅ done (2026-08-29) | `services/api/tests/test_tenant_pentest.py` — HTTP-level pen-test suite (18 cases incl. concurrent cross-tenant access); `tests/test_tenant_isolation.py` still separately proves the RLS policies themselves, unchanged |
+| NK-09/10/11 | ❌ not started | RAG (ingestion, pgvector retrieval, multilingual embeddings) — needs an embeddings provider (API key or a chosen local model), not attempted this session |
+| NK-12/13/14/15 | ❌ not started | Call persistence (blocked on SH-11's turn events), usage metering, Razorpay billing (needs Razorpay keys), webhook idempotency |
+| NK-16 | ✅ done (2026-08-29) | Audit logging — `AuditLog` model existed but nothing wrote to it; now wired into every client/tenant/user mutation in `admin.py` (`_write_audit_log`) plus a `GET /admin/audit-logs` read endpoint. Verified live against real Postgres/RLS, not just the SQLite unit suite — see session log |
+| NK-17 | ✅ done (2026-08-29) | Backup/restore — continuous WAL archiving (docker-compose.yml's postgres `archive_command`) + `scripts/backup-db.sh` (base backup, `pg_verifybackup`, retention) + `scripts/restore-db.sh` (restores into a disposable scratch container, verifies data). **Actually run** end-to-end against the live stack, not just written — see session log |
+| NH-06 | ✅ done | Admin client management — API + `apps/admin-dashboard` UI, built and merged 2026-08-28/29 |
+| NH-07 | ❌ not started | Admin live calls/health — blocked on SH-13 (per-stage latency) for the "live calls" half; `/health` already exists for the "health" half but isn't surfaced in a dashboard yet |
+| NH-08 | ❌ not started | Admin usage/cost — blocked on NK-13/14 |
+| NH-09 | ❌ not started | Client agent config — needs a DB schema for "agent config" this session deliberately didn't invent without a spec (see session log's scoping note) |
+| NH-10 | ❌ not started | Client knowledge base — same reason as NH-09, plus depends on NK-09 |
+| NH-11 | ⚠️ partial | `apps/client-dashboard`'s Calls list covers the call-log half (2026-08-29); no transcripts (blocked on NK-12/SH-11) or analytics yet |
+| NH-12 | ❌ not started | Client billing UI — blocked on NK-14 |
+| NH-13/14/15 | ❌ not started | Integration service, email/WhatsApp automation, CRM adapters — see `NH16_N8N_DECISION.md`: recommends building these directly rather than adopting n8n, for both licensing and tenant-isolation reasons |
+| NH-16 | ✅ done (2026-08-29) | Written go/no-go decision — see `NH16_N8N_DECISION.md`. Recommendation: **no-go** on self-hosted n8n (likely licensing violation for this use case per n8n's own community guidance, plus weaker tenant isolation than this codebase's RLS-based standard); build automation directly in `services/integration-service` instead |
+| NH-17 | ⚠️ partial (2026-08-29) | Deployment draining — mechanism implemented and unit-tested (`voice_pipeline.py` rejects new `/ws/` connections while draining; `src/main.py`'s lifespan shutdown waits for active calls, up to a timeout). NOT verified against a real active call — no live voice pipeline exists yet to generate one (see SH-04/06/08 row) |
+| NH-18 | ⚠️ partial (2026-08-29) | Monitoring/alerts — `services/api/src/monitoring.py`: rolling error-rate/latency metrics, DB/Redis-unreachable and disk-usage threshold checks (thresholds transcribed from Infra Guide §5), a periodic evaluation loop, `GET /metrics`. Verified live (forced a real Redis outage, confirmed the alert fired). Deliberately missing: per-stage voice latency and provider-failure-rate metrics (need the live pipeline) and actual paging (Slack/PagerDuty/SMS — needs a destination credential nobody has supplied; logs a structured CRITICAL line instead, see `LoggingNotifier`) |
 
 ## Session log
+
+### 2026-08-29 (cont'd) — everything not blocked on external API keys: NK-06/08/16/17, NH-16/17/18
+
+Follow-up to the same day's earlier entry below. Asked to "complete
+everything where API is not needed" — audited every open ticket against
+the actual Execution Plan PDF (not the earlier informal summary) to
+separate what's genuinely blocked on provider credentials from what
+isn't, then worked through the latter. Skipped SH-02 (needs Twilio creds
+to verify even though the adapter code doesn't strictly), and NH-09/NH-10
+(need a DB schema for "agent config"/"knowledge base" this session
+deliberately didn't invent without a product spec — flagged, not guessed
+at). Everything below was implemented, tested, AND verified against the
+live Docker stack (real Postgres with RLS applied, real Redis) — not just
+the SQLite unit suite, per this doc's own "how to verify anything" section.
+
+**NK-06 (RBAC role matrix) + NK-08 (tenant isolation pen-test suite).**
+Both were "partial" — role checks and cross-tenant checks existed, scattered
+across test_admin.py alongside CRUD tests, not as one identifiable suite a
+reviewer could point to. Added `test_rbac_matrix.py` (90 cases: every
+`/admin/*` route × every role, plus tampered/expired JWT rejection on all of
+them) and `test_tenant_pentest.py` (18 cases, modeled directly on Testing
+Guide §7's own example cases — cross-tenant ID access, crafted query-param
+escalation, cross-tenant mutation attempts, and the one thing nothing else
+in the repo covered: concurrent cross-tenant requests via `asyncio.gather`,
+proving no per-request state leaks across coroutines).
+
+**NK-16 (audit logging).** The `AuditLog` model/table existed
+(`services/api/src/models.py`) with a docstring literally promising it'd be
+"written by admin/internal routers whenever a mutating, security-relevant
+endpoint is hit" — nothing did. Added `_write_audit_log` (best-effort: never
+rolls back the mutation it's describing if the audit write itself fails) and
+wired it into every client/tenant/user create/update/delete in `admin.py`,
+plus `GET /admin/audit-logs` (tenant-scoped for `tenant_admin`, same pattern
+as `list_users`/`list_calls`). One real bug found and fixed along the way:
+`create_client`/`update_client`/`delete_client` and the `/admin/tenants`
+equivalents used plain `get_db` (no RLS tenant context) — fine for the
+unscoped `clients` table itself, but writing to `audit_logs` (which *is*
+RLS-scoped) through that session would have hit the exact same RLS rejection
+as the earlier `POST /call` bug. Switched all of them to
+`get_tenant_scoped_db` (super_admin's cross-tenant sentinel covers it).
+Verified live: created/renamed/deleted a real client through the API,
+confirmed three correctly-shaped audit rows (before/after diffs, no
+`password_hash` ever present) came back from `GET /admin/audit-logs`
+against real Postgres.
+
+**NK-17 (backup/restore).** Database Design §10: "a backup nobody has ever
+restored doesn't count as a backup," and the ticket's own done-when is
+literally "actual restore passes." Added continuous WAL archiving to
+postgres's compose config (`archive_mode=on` + `archive_command`, into a new
+`postgres_backups` volume — deliberately separate from `postgres_data`),
+`scripts/backup-db.sh` (`pg_basebackup` + `pg_verifybackup` + retention
+pruning), and `scripts/restore-db.sh` (extracts a base backup into a
+disposable scratch Postgres container, replays WAL via `restore_command`,
+optionally to a point-in-time target, verifies real row counts, tears
+itself down — never touches the running `staykaro-postgres`, so it's safe
+to run as a recurring drill). **Actually ran it**, twice — once to catch a
+real permission bug (a fresh Docker volume is root-owned; the postgres
+process, uid 999, couldn't write into it — fixed with a one-shot
+`backups-volume-init` service that chowns it before postgres starts) and a
+real shell-quoting bug (building `restore_command`'s value — which itself
+contains both `%`-placeholders and single quotes — via string substitution
+into an outer double-quoted `bash -c "..."` silently stripped the quotes
+and placeholders; fixed by passing it through as an environment variable
+into the container's own shell instead of interpolating it as text). Third
+run succeeded: full base backup, verified integrity, restored into a
+scratch container, confirmed the exact row counts (1 client, 1 admin_user,
+1 call_request, 3 audit_logs) matching live state at that moment.
+
+**NH-17 (deployment draining).** Infra Guide §7: the voice gateway should
+stop accepting new calls on a shutdown signal and let active ones finish
+naturally before the container actually stops. Added an
+`is_draining`/`on_call_started`/`on_call_ended` hook set to
+`build_voice_router` (`voice_pipeline.py`) — a draining instance closes new
+`/ws/{call_id}` connections with code 1013 ("try again later") before
+`accept()`, so the telephony platform retries against a different instance
+rather than getting a connection that opens and immediately drops.
+`src/main.py`'s lifespan shutdown phase sets the flag and polls an
+active-call counter down to zero (or a configurable timeout,
+`VOICE_GATEWAY_DRAIN_TIMEOUT_SECONDS`, default 300s — a phone call runs
+minutes, not the few seconds a typical HTTP graceful-shutdown window
+assumes). Mechanism-level unit tests only (8, across two files) — "verified
+against a real active call" per the ticket's own done-when needs the live
+voice pipeline, which doesn't exist yet (SH-04/06/08 blocked on provider
+keys). Worth knowing for later: `services/voice-gateway/src/main.py`
+already has a fully local, no-API-key fallback pipeline (Whisper + a
+rule-based responder + pyttsx3) mentioned in its own comments as existing
+for exactly this kind of dev/test purpose — that's the actual path to
+closing NH-17's real-call verification without waiting on any provider
+key, just wasn't attempted this session (scope was already large).
+
+**NH-18 (monitoring/alerts).** Full scope needs per-stage voice latency and
+provider failure rate (blocked) and real paging — Slack/PagerDuty/SMS all
+need a destination credential nobody has supplied. Built what's actually
+available: `services/api/src/monitoring.py` — a rolling-window metrics
+registry (error rate, p50/p95 latency), threshold evaluation transcribed
+directly from Infra Guide §5's table (error rate, latency, DB/Redis
+unreachable, disk usage), and a `Notifier` Protocol whose only shipped
+implementation is a structured `logger.critical("ALERT ...")` line —
+deliberately the seam a real destination gets wired into later, not a
+guess at what that destination should be. A periodic loop (default 60s,
+`MONITORING_INTERVAL_SECONDS`) evaluates independently of request traffic,
+so a threshold like "elevated error rate for 5 minutes" fires even during
+a quiet period. `GET /metrics` (super_admin-only) exposes the current
+snapshot on demand. Verified live: stopped the real `staykaro-redis`
+container for ~15s with the interval turned down to 5s for the test, and
+watched the exact expected `ALERT [redis_unreachable]` and
+`ALERT [latency_p95]` lines appear in the API's logs — not inferred from
+reading the code, actually triggered.
+
+**NH-16 (n8n licensing/isolation decision).** Written recommendation in
+`NH16_N8N_DECISION.md`: **no-go** on self-hosted n8n for NH-13/14/15's
+automation. Researched n8n's own Sustainable Use License docs and — more
+usefully — a community-forum thread where n8n's own moderators answered
+almost this exact question (SaaS company, n8n hidden entirely behind their
+own product) for another company: the deciding factor isn't whether
+customers see n8n's UI, it's whether they derive value from its automation
+even indirectly, which very likely puts Staykaro's use case outside the
+free license and into paid Enterprise territory. Independent of licensing,
+n8n Community Edition also has no native multi-tenant RBAC — a fail-open
+isolation story (a workflow that forgets to scope by tenant just silently
+touches the wrong tenant's data), the opposite of this codebase's own
+RLS-based fail-closed standard that NK-07/NK-08 spent real effort proving
+out. Recommendation: build NH-13/14/15's automation directly in
+`services/integration-service` instead — same tenant-isolation guarantees
+as the rest of the API, no licensing question to resolve first. Full
+reasoning and sources in the decision doc; this is a recommendation for a
+human to sign off on, not a unilateral decision.
+
+**Verification note:** every ticket above that touches Postgres was run
+against the actual live `docker compose --profile all` stack, not only the
+SQLite unit suite — rebuilding the `api` container after each backend
+change and hitting it with real `curl`/`docker exec` commands, exactly this
+doc's own "always verify Docker changes by actually building and running
+the image" instruction. Full backend suite (`services/api/tests/` +
+`tests/` + `app/tests/` + `services/worker/tests/` +
+`services/integration-service/tests/`) sits at 413 passed, 24 skipped (the
+real-Postgres RLS suite, which needs `TEST_POSTGRES_DSN` env vars this
+session's ad hoc verification didn't set up) as of this entry.
 
 ### 2026-08-29 — merge Phase 7 admin-dashboard, build client-dashboard, fix POST /call RLS bug
 
