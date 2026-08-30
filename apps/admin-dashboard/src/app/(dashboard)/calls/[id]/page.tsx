@@ -1,10 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallQuery } from "../../../../lib/hooks/useCalls";
 import { Card } from "../../../../components/Card";
 import { ErrorBanner } from "../../../../components/ErrorBanner";
 import { Spinner } from "../../../../components/Spinner";
+import { PageHeader } from "../../../../components/PageHeader";
+import { Button } from "../../../../components/Button";
 
 export default function CallDetailPage() {
   const params = useParams<{ id: string }>();
@@ -14,13 +17,17 @@ export default function CallDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-10">
+      <div className="flex justify-center py-12">
         <Spinner />
       </div>
     );
   }
   if (isError || !call) {
-    return <ErrorBanner error={error} />;
+    return (
+      <div className="max-w-lg">
+        <ErrorBanner error={error} />
+      </div>
+    );
   }
 
   const rows: Array<[string, string]> = [
@@ -34,13 +41,24 @@ export default function CallDetailPage() {
 
   return (
     <div className="max-w-lg">
-      <h1 className="mb-6 text-xl font-semibold text-slate-900">Call #{call.id}</h1>
-      <Card className="p-6">
-        <dl className="flex flex-col gap-3 text-sm">
+      <PageHeader
+        eyebrow="Calls"
+        title={`Call #${call.id}`}
+        actions={
+          <Link href="/calls">
+            <Button variant="ghost" size="sm">← All calls</Button>
+          </Link>
+        }
+      />
+
+      <Card>
+        <dl className="divide-y divide-mist">
           {rows.map(([label, value]) => (
-            <div key={label} className="flex justify-between border-b border-slate-100 pb-2">
-              <dt className="text-slate-500">{label}</dt>
-              <dd className="text-slate-900">{value}</dd>
+            <div key={label} className="flex items-center justify-between py-3">
+              <dt className="text-xs font-medium uppercase tracking-widest text-slate-neutral">
+                {label}
+              </dt>
+              <dd className="text-sm text-graphite">{value}</dd>
             </div>
           ))}
         </dl>

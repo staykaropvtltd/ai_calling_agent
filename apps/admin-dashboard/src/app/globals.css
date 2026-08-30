@@ -1,8 +1,25 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-  color: #0f172a;
-  background: #f8fafc;
+:root {
+  --font-display: "PolySans", "Plus Jakarta Sans", Inter, system-ui, sans-serif;
+  --font-body: Inter, system-ui, sans-serif;
 }
+
+body {
+  background: #F5F5F5;
+  color: #202020;
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+}
+
+.font-display { font-family: var(--font-display); }
+.font-body    { font-family: var(--font-body); }

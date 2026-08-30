@@ -8,7 +8,9 @@ import { useCreateUser } from "../../../../lib/hooks/useUsers";
 import { useTenantsQuery } from "../../../../lib/hooks/useTenants";
 import { Card } from "../../../../components/Card";
 import { ErrorBanner } from "../../../../components/ErrorBanner";
-import { buttonClass, FormField, inputClass, secondaryButtonClass } from "../../../../components/FormField";
+import { FormField, inputClass } from "../../../../components/FormField";
+import { PageHeader } from "../../../../components/PageHeader";
+import { Button } from "../../../../components/Button";
 
 type CreatableRole = "tenant_admin" | "agent";
 
@@ -46,14 +48,15 @@ function NewUserForm() {
 
   return (
     <div className="max-w-lg">
-      <h1 className="mb-6 text-xl font-semibold text-slate-900">New user</h1>
-      <Card className="p-6">
+      <PageHeader eyebrow="Users" title="New user" />
+
+      <Card>
         {createUser.isError ? (
-          <div className="mb-4">
+          <div className="mb-5">
             <ErrorBanner error={createUser.error} />
           </div>
         ) : null}
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
           <FormField label="Email" htmlFor="email">
             <input
               id="email"
@@ -74,12 +77,7 @@ function NewUserForm() {
             />
           </FormField>
           <FormField label="Role" htmlFor="role">
-            <select
-              id="role"
-              value={role}
-              onChange={(e) => setRole(e.target.value as CreatableRole)}
-              className={inputClass}
-            >
+            <select id="role" value={role} onChange={(e) => setRole(e.target.value as CreatableRole)} className={inputClass}>
               <option value="tenant_admin">Tenant admin</option>
               <option value="agent">Agent</option>
             </select>
@@ -110,18 +108,22 @@ function NewUserForm() {
               minLength={8}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Leave blank — user can't log in until an admin sets one"
+              placeholder="Leave blank until admin sets one"
               className={inputClass}
             />
           </FormField>
 
-          <div className="mt-2 flex gap-3">
-            <button type="submit" disabled={createUser.isPending} className={buttonClass}>
+          <div className="flex gap-3 pt-2">
+            <button
+              type="submit"
+              disabled={createUser.isPending}
+              className="bg-graphite px-5 py-2.5 font-display text-sm font-medium text-white transition-colors hover:bg-steel disabled:opacity-50"
+            >
               {createUser.isPending ? "Creating…" : "Create user"}
             </button>
-            <button type="button" onClick={() => router.back()} className={secondaryButtonClass}>
+            <Button type="button" variant="ghost" onClick={() => router.back()}>
               Cancel
-            </button>
+            </Button>
           </div>
         </form>
       </Card>

@@ -61,7 +61,7 @@ describe("TenantsPage", () => {
 
     await waitFor(() => expect(screen.getByText("Acme Hotels")).toBeInTheDocument());
     expect(screen.getByText("acme-hotels")).toBeInTheDocument();
-    expect(screen.getByText("New tenant")).toBeInTheDocument();
+    expect(screen.getByText("New client")).toBeInTheDocument();
   });
 
   it("shows access-denied for a tenant_admin", () => {

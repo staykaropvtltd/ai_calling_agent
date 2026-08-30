@@ -9,16 +9,15 @@ export interface UserListParams {
   status?: string;
 }
 
-// /admin/users is tenant-scoped server-side for tenant_admin tokens — see
-// listCalls' comment in ./calls.ts, same mechanism.
+// /client/users is tenant-scoped by the backend (_require_client_admin + RLS).
 export async function listUsers(
   params: UserListParams = {},
 ): Promise<PaginatedResponse<TenantUser>> {
-  const { data } = await client.get<PaginatedResponse<TenantUser>>("/admin/users", { params });
+  const { data } = await client.get<PaginatedResponse<TenantUser>>("/client/users", { params });
   return data;
 }
 
 export async function getUser(userId: string): Promise<TenantUser> {
-  const { data } = await client.get<TenantUser>(`/admin/users/${userId}`);
+  const { data } = await client.get<TenantUser>(`/client/users/${userId}`);
   return data;
 }

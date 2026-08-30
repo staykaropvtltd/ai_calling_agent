@@ -9,7 +9,7 @@ import { Table, type Column } from "../../../components/Table";
 import { Pagination } from "../../../components/Pagination";
 import { ErrorBanner } from "../../../components/ErrorBanner";
 import { Spinner } from "../../../components/Spinner";
-import { inputClass } from "../../../components/FormField";
+import { PageHeader } from "../../../components/PageHeader";
 import type { CallLogEntry } from "../../../lib/types/call";
 
 export default function CallsPage() {
@@ -27,43 +27,48 @@ export default function CallsPage() {
   });
 
   const columns: Column<CallLogEntry>[] = [
-    { key: "customer_name", header: "Customer", render: (c) => c.customer_name ?? "—" },
-    { key: "phone_number", header: "Phone", render: (c) => c.phone_number ?? "—" },
+    {
+      key: "customer_name",
+      header: "Customer",
+      render: (c) => <span className="font-medium text-graphite">{c.customer_name ?? "—"}</span>,
+    },
+    { key: "phone_number", header: "Phone", render: (c) => <span className="font-mono text-sm">{c.phone_number ?? "—"}</span> },
     { key: "hotel_name", header: "Hotel", render: (c) => c.hotel_name ?? "—" },
     { key: "check_in_date", header: "Check-in", render: (c) => c.check_in_date ?? "—" },
     { key: "check_out_date", header: "Check-out", render: (c) => c.check_out_date ?? "—" },
     {
       key: "created_at",
       header: "Created",
-      render: (c) => (c.created_at ? new Date(c.created_at).toLocaleString() : "—"),
+      render: (c) => c.created_at ? new Date(c.created_at).toLocaleString() : "—",
     },
   ];
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-semibold text-slate-900">Calls</h1>
+      <PageHeader
+        eyebrow="Platform"
+        title="Calls"
+        description="All AI calls across the platform."
+      />
 
       {isSuperAdmin ? (
-        <div className="mb-4">
+        <div className="mb-5">
           <input
             placeholder="Filter by tenant ID…"
             value={tenantId}
-            onChange={(e) => {
-              setTenantId(e.target.value);
-              setPage(1);
-            }}
-            className={`${inputClass} w-48`}
+            onChange={(e) => { setTenantId(e.target.value); setPage(1); }}
+            className="w-56 rounded-xl border border-mist bg-canvas px-4 py-2 text-sm text-graphite focus:border-graphite focus:outline-none placeholder:text-slate-neutral"
           />
         </div>
       ) : null}
 
-      <Card>
+      <Card padding={false}>
         {isLoading ? (
-          <div className="flex justify-center py-10">
+          <div className="flex justify-center py-12">
             <Spinner />
           </div>
         ) : isError ? (
-          <div className="p-4">
+          <div className="p-6">
             <ErrorBanner error={error} />
           </div>
         ) : (

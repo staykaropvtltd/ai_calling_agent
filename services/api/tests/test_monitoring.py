@@ -68,7 +68,9 @@ class TestMetricsRegistry:
 
 class TestCheckAlerts:
     def test_no_alerts_when_everything_healthy(self):
-        alerts = check_alerts(_snapshot(), db_status="ok", redis_status="ok")
+        alerts = check_alerts(
+            _snapshot(), db_status="ok", redis_status="ok", disk_usage_pct_fn=lambda: 10.0
+        )
         assert alerts == []
 
     def test_database_unreachable_pages(self):
@@ -85,7 +87,12 @@ class TestCheckAlerts:
         """not_configured is a deliberate degraded-but-functional mode
         (src/main.py's own health check treats it the same way) — never a
         page-worthy outage."""
-        alerts = check_alerts(_snapshot(), db_status="ok", redis_status="not_configured")
+        alerts = check_alerts(
+            _snapshot(),
+            db_status="ok",
+            redis_status="not_configured",
+            disk_usage_pct_fn=lambda: 10.0,
+        )
         assert alerts == []
 
     def test_high_error_rate_pages(self):
@@ -117,9 +124,35 @@ class TestCheckAlerts:
 
     def test_multiple_simultaneous_breaches_all_reported(self):
         snap = _snapshot(request_count=100, error_count=50, error_rate=0.5, p95_latency_ms=5000.0)
-        alerts = check_alerts(snap, db_status="unreachable", redis_status="unreachable")
+        alerts = check_alerts(
+            snap,
+            db_status="unreachable",
+            redis_status="unreachable",
+            disk_usage_pct_fn=lambda: 10.0,
+        )
         signals = {a.signal for a in alerts}
         assert signals == {"database_unreachable", "redis_unreachable", "error_rate", "latency_p95"}
+
+    def test_disk_usage_above_threshold_pages(self):
+        alerts = check_alerts(
+            _snapshot(), db_status="ok", redis_status="ok", disk_usage_pct_fn=lambda: 90.0
+        )
+        assert any(a.signal == "disk_usage" for a in alerts)
+        assert next(a for a in alerts if a.signal == "disk_usage").severity == "notify"
+
+    def test_disk_usage_below_threshold_does_not_alert(self):
+        alerts = check_alerts(
+            _snapshot(), db_status="ok", redis_status="ok", disk_usage_pct_fn=lambda: 50.0
+        )
+        assert not any(a.signal == "disk_usage" for a in alerts)
+
+    def test_disk_usage_real_function_works(self):
+        """_get_disk_usage_pct returns a real value and doesn't raise."""
+        from src.monitoring import _get_disk_usage_pct
+
+        pct = _get_disk_usage_pct()
+        assert isinstance(pct, float)
+        assert 0.0 <= pct <= 100.0
 
 
 class TestLoggingNotifier:

@@ -36,6 +36,7 @@ from src.config import (
 from src.database import async_session_factory, engine, get_db
 from src.models import Caller, User
 from src.routers.admin import router as admin_router
+from src.routers.client import router as client_router
 from src.routers.internal import router as internal_router
 from src.routers.jobs import router as jobs_router
 from src.tenant import get_login_db, get_tenant_scoped_db
@@ -114,6 +115,7 @@ if API_CORS_ORIGINS:
     )
 
 app.include_router(admin_router)
+app.include_router(client_router)
 app.include_router(internal_router)
 app.include_router(jobs_router)
 
@@ -272,7 +274,9 @@ async def metrics_endpoint(
     counts across every tenant), not anything a route elsewhere already
     treats as tenant-visible."""
     if user.get("role") != "super_admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin role required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="super_admin role required"
+        )
 
     checks = await _check_dependencies(db)
     snap = monitoring.registry.snapshot()

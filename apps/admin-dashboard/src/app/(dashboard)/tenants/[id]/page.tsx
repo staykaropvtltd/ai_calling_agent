@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { FormEvent } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { RoleGuard } from "../../../../lib/auth/RoleGuard";
 import {
@@ -11,12 +12,14 @@ import {
   useUpdateTenant,
 } from "../../../../lib/hooks/useTenants";
 import { useUsersQuery } from "../../../../lib/hooks/useUsers";
-import { Card } from "../../../../components/Card";
+import { Card, StatCard } from "../../../../components/Card";
 import { ErrorBanner } from "../../../../components/ErrorBanner";
 import { Spinner } from "../../../../components/Spinner";
 import { StatusBadge } from "../../../../components/StatusBadge";
 import { Table, type Column } from "../../../../components/Table";
-import { buttonClass, FormField, inputClass, secondaryButtonClass } from "../../../../components/FormField";
+import { FormField, inputClass } from "../../../../components/FormField";
+import { PageHeader } from "../../../../components/PageHeader";
+import { Button } from "../../../../components/Button";
 import type { Tenant, TenantPlan, TenantStatus } from "../../../../lib/types/tenant";
 import type { TenantUser } from "../../../../lib/types/user";
 
@@ -41,7 +44,7 @@ function TenantDetail() {
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-10">
+      <div className="flex justify-center py-12">
         <Spinner />
       </div>
     );
@@ -56,31 +59,39 @@ function TenantDetail() {
   }
 
   const userColumns: Column<TenantUser>[] = [
-    { key: "email", header: "Email", render: (u) => u.email },
-    { key: "full_name", header: "Name", render: (u) => u.full_name },
+    {
+      key: "email",
+      header: "Email",
+      render: (u) => <span className="font-medium text-graphite">{u.email}</span>,
+    },
+    { key: "full_name", header: "Name", render: (u) => u.full_name || "—" },
     { key: "role", header: "Role", render: (u) => <StatusBadge value={u.role} /> },
     { key: "status", header: "Status", render: (u) => <StatusBadge value={u.status} /> },
   ];
 
   return (
-    <div className="flex max-w-3xl flex-col gap-6">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">{tenant.name}</h1>
-        <p className="text-sm text-slate-500">/{tenant.slug}</p>
-      </div>
+    <div className="max-w-3xl">
+      <PageHeader
+        eyebrow="Clients"
+        title={tenant.name}
+        description={`/${tenant.slug}`}
+        actions={
+          <Link href="/tenants">
+            <Button variant="ghost" size="sm">← All clients</Button>
+          </Link>
+        }
+      />
 
       {stats ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <Stat label="Total calls" value={stats.total_calls} />
-          <Stat label="This month" value={stats.calls_this_month} />
-          <Stat label="Active users" value={stats.active_users} />
-          <Stat label="Plan usage" value={`${stats.plan_usage_pct}%`} />
+        <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <StatCard label="Total calls" value={stats.total_calls} accent />
+          <StatCard label="This month" value={stats.calls_this_month} />
+          <StatCard label="Active users" value={stats.active_users} />
+          <StatCard label="Plan usage" value={`${stats.plan_usage_pct}%`} />
         </div>
       ) : null}
 
-      {/* Keyed by tenant_id so the form's local state is (re)initialized
-          fresh from the loaded tenant with no effect needed — see
-          https://react.dev/learn/you-might-not-need-an-effect#resetting-all-state-when-a-prop-changes */}
+      {/* Keyed by tenant_id so form state re-initialises from the loaded tenant */}
       <TenantEditForm
         key={tenant.tenant_id}
         tenant={tenant}
@@ -90,14 +101,16 @@ function TenantDetail() {
         saveError={updateTenant.error}
       />
 
-      <div>
-        <h2 className="mb-3 text-lg font-medium text-slate-900">Users in this tenant</h2>
-        <Card>
+      <div className="mt-8">
+        <h2 className="mb-4 font-display text-lg font-semibold text-graphite">
+          Users in this client
+        </h2>
+        <Card padding={false}>
           <Table
             columns={userColumns}
             rows={users?.data ?? []}
             rowKey={(u) => u.user_id}
-            emptyMessage="No users in this tenant yet."
+            emptyMessage="No users in this client yet."
           />
         </Card>
       </div>
@@ -132,35 +145,25 @@ function TenantEditForm({ tenant, onSave, onSuspend, isSaving, saveError }: Tena
   }
 
   return (
-    <Card className="p-6">
+    <Card>
       {saveError ? (
-        <div className="mb-4">
+        <div className="mb-5">
           <ErrorBanner error={saveError} />
         </div>
       ) : null}
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-5">
         <FormField label="Name" htmlFor="name">
           <input id="name" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
         </FormField>
         <FormField label="Plan" htmlFor="plan">
-          <select
-            id="plan"
-            value={plan}
-            onChange={(e) => setPlan(e.target.value as TenantPlan)}
-            className={inputClass}
-          >
+          <select id="plan" value={plan} onChange={(e) => setPlan(e.target.value as TenantPlan)} className={inputClass}>
             <option value="starter">Starter</option>
             <option value="pro">Pro</option>
             <option value="enterprise">Enterprise</option>
           </select>
         </FormField>
         <FormField label="Status" htmlFor="status">
-          <select
-            id="status"
-            value={status}
-            onChange={(e) => setStatus(e.target.value as TenantStatus)}
-            className={inputClass}
-          >
+          <select id="status" value={status} onChange={(e) => setStatus(e.target.value as TenantStatus)} className={inputClass}>
             <option value="active">Active</option>
             <option value="suspended">Suspended</option>
             <option value="inactive">Inactive</option>
@@ -185,24 +188,15 @@ function TenantEditForm({ tenant, onSave, onSuspend, isSaving, saveError }: Tena
             className={inputClass}
           />
         </FormField>
-        <div className="mt-2 flex gap-3">
-          <button type="submit" disabled={isSaving} className={buttonClass}>
+        <div className="flex gap-3 pt-2">
+          <button type="submit" disabled={isSaving} className="bg-graphite px-5 py-2.5 font-display text-sm font-medium text-white transition-colors hover:bg-steel disabled:opacity-50">
             {isSaving ? "Saving…" : "Save changes"}
           </button>
-          <button type="button" onClick={onSuspend} className={secondaryButtonClass}>
-            Suspend tenant
-          </button>
+          <Button type="button" variant="danger" onClick={onSuspend}>
+            Suspend client
+          </Button>
         </div>
       </form>
-    </Card>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <Card className="p-4">
-      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 text-lg font-semibold text-slate-900">{value}</div>
     </Card>
   );
 }

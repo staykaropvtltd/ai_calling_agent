@@ -1,8 +1,63 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..700&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-  color: #0f172a;
-  background: #f8fafc;
+@layer base {
+  :root {
+    --font-display: "PolySans", "Plus Jakarta Sans", "Inter", system-ui,
+      sans-serif;
+    --font-body: "Inter", system-ui, sans-serif;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background: #f5f5f5;
+    color: #202020;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-display);
+    letter-spacing: -0.025em;
+    font-weight: 600;
+  }
+
+  button,
+  [role="button"] {
+    font-family: var(--font-display);
+  }
+
+  a {
+    text-decoration: none;
+    color: inherit;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+  }
+  .font-body {
+    font-family: var(--font-body);
+  }
+  .tracking-display {
+    letter-spacing: -0.025em;
+  }
 }
