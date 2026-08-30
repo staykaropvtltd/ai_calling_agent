@@ -101,7 +101,7 @@ function EntryPicker({ onSelect }: { onSelect: (m: EntryMode) => void }) {
         Sign in
       </h1>
       <p className="mb-8 text-sm text-slate-neutral">
-        Choose how you're accessing StayKaro.
+        Choose how you&apos;re accessing StayKaro.
       </p>
 
       <div className="flex flex-col gap-3">
@@ -140,7 +140,7 @@ function EntryPicker({ onSelect }: { onSelect: (m: EntryMode) => void }) {
               Client Administrator
             </div>
             <div className="text-xs text-slate-neutral">
-              Manage your hotel's AI calling setup and team
+              Manage your hotel&apos;s AI calling setup and team
             </div>
           </div>
           <span className="text-slate-neutral transition-colors group-hover:text-graphite">
@@ -162,7 +162,7 @@ function EntryPicker({ onSelect }: { onSelect: (m: EntryMode) => void }) {
               User / Agent
             </div>
             <div className="text-xs text-slate-neutral">
-              Place calls and view your team's activity
+              Place calls and view your team&apos;s activity
             </div>
           </div>
           <span className="text-slate-neutral transition-colors group-hover:text-graphite">
