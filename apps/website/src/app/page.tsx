@@ -127,35 +127,52 @@ export default function HomePage() {
       <Nav />
 
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      <section className="bg-canvas pt-24 pb-20 lg:pt-32 lg:pb-28">
-        <div className="mx-auto max-w-site px-6">
-          <div className="grid grid-cols-1 gap-12 lg:grid-cols-2 lg:gap-16 lg:items-center">
+      <section className="relative overflow-hidden bg-canvas pt-32 pb-28 lg:pt-48 lg:pb-44">
+        {/* Animated dot grid */}
+        <div className="animated-grid pointer-events-none absolute inset-0" />
+        {/* Drifting gradient orbs */}
+        <div
+          className="pointer-events-none absolute -top-60 -left-60 h-[700px] w-[700px] rounded-full"
+          style={{
+            background: "radial-gradient(circle, rgba(255,104,44,0.11) 0%, transparent 70%)",
+            animation: "orbDrift 16s ease-in-out infinite",
+          }}
+        />
+        <div
+          className="pointer-events-none absolute -bottom-40 -right-20 h-[580px] w-[580px] rounded-full"
+          style={{
+            background: "radial-gradient(circle, rgba(129,103,41,0.08) 0%, transparent 70%)",
+            animation: "orbDriftAlt 20s ease-in-out infinite 3s",
+          }}
+        />
+        <div className="mx-auto max-w-site px-8 lg:px-16">
+          <div className="grid grid-cols-1 gap-16 lg:grid-cols-2 lg:gap-28 xl:gap-40 lg:items-center">
 
             {/* Left — copy */}
             <div>
-              <p className="mb-4 font-body text-sm font-medium uppercase tracking-widest text-ember">
+              <p className="mb-5 animate-fade-up font-body text-sm font-medium uppercase tracking-widest text-ember">
                 AI Calling Agent for Hospitality
               </p>
-              <h1 className="mb-6 font-display text-4xl font-normal leading-tight tracking-display text-graphite lg:text-5xl xl:text-display">
+              <h1 className="mb-7 animate-fade-up anim-delay-1 font-display text-4xl font-normal leading-tight tracking-display text-graphite lg:text-5xl xl:text-display">
                 The AI that answers your phone,
                 <br className="hidden lg:block" /> so your staff{" "}
-                <span className="link-ember">don&apos;t have to</span>.
+                <span className="shimmer-ember">don&apos;t have to</span>.
               </h1>
-              <p className="mb-10 max-w-lg font-body text-subheading leading-relaxed text-steel">
+              <p className="mb-12 animate-fade-up anim-delay-2 max-w-lg font-body text-subheading leading-relaxed text-steel">
                 StayKaro handles your outbound calls — booking confirmations, guest
                 follow-ups, reservation reminders — while your team focuses on
                 delivering exceptional service at the property.
               </p>
-              <div className="flex flex-wrap items-center gap-4">
+              <div className="animate-fade-up anim-delay-3 flex flex-wrap items-center gap-5">
                 <Link
                   href="/login"
-                  className="inline-flex items-center gap-2 bg-graphite px-6 py-3 font-display text-base font-normal tracking-display text-canvas transition-colors hover:bg-steel"
+                  className="inline-flex items-center gap-2 bg-graphite px-8 py-4 font-display text-base font-normal tracking-display text-canvas transition-colors hover:bg-steel"
                 >
                   Start free trial
                 </Link>
                 <Link
                   href="#how-it-works"
-                  className="inline-flex items-center gap-2 border border-graphite px-6 py-3 font-display text-base font-normal tracking-display text-graphite transition-colors hover:bg-ash"
+                  className="inline-flex items-center gap-2 border border-graphite px-8 py-4 font-display text-base font-normal tracking-display text-graphite transition-colors hover:bg-ash"
                 >
                   See how it works
                 </Link>
@@ -163,23 +180,24 @@ export default function HomePage() {
             </div>
 
             {/* Right — data cards */}
-            <div className="relative lg:h-[480px]">
+            <div className="relative animate-fade-in anim-delay-2 lg:h-[580px]">
               <StatCluster />
             </div>
           </div>
         </div>
       </section>
 
+
       {/* ── Stats strip ──────────────────────────────────────────────────── */}
       <section className="border-y border-mist bg-ash">
-        <div className="mx-auto max-w-site px-6 py-8">
-          <div className="grid grid-cols-2 gap-8 lg:grid-cols-4">
-            {STATS.map((s) => (
-              <div key={s.label} className="text-center lg:text-left">
+        <div className="mx-auto max-w-site px-8 py-16 lg:px-16 lg:py-20">
+          <div className="grid grid-cols-2 gap-x-12 gap-y-10 lg:grid-cols-4 lg:gap-x-24">
+            {STATS.map((s, i) => (
+              <div key={s.label} className="scroll-reveal text-center lg:text-left" style={{ animationDelay: `${i * 0.1}s` }}>
                 <div className="font-display text-heading font-normal tracking-display text-graphite">
                   {s.value}
                 </div>
-                <div className="mt-1 font-body text-sm text-slate">{s.label}</div>
+                <div className="mt-2 font-body text-sm text-slate">{s.label}</div>
               </div>
             ))}
           </div>
@@ -188,8 +206,8 @@ export default function HomePage() {
 
       {/* ── Features ─────────────────────────────────────────────────────── */}
       <section className="section bg-canvas" id="features">
-        <div className="mx-auto max-w-site px-6">
-          <div className="mb-16 max-w-xl">
+        <div className="mx-auto max-w-site px-8 lg:px-16">
+          <div className="scroll-reveal mb-20 max-w-xl">
             <p className="mb-3 font-body text-sm font-medium uppercase tracking-widest text-brass">
               Capabilities
             </p>
@@ -199,8 +217,8 @@ export default function HomePage() {
           </div>
 
           <div className="grid grid-cols-1 gap-px bg-mist md:grid-cols-2 lg:grid-cols-3">
-            {FEATURES.map((f) => (
-              <div key={f.title} className="bg-canvas p-8">
+            {FEATURES.map((f, i) => (
+              <div key={f.title} className="scroll-reveal hover-lift bg-canvas p-10 lg:p-12" style={{ animationDelay: `${i * 0.09}s` }}>
                 <div className="mb-4 font-display text-2xl text-ember">{f.icon}</div>
                 <h3 className="mb-3 font-display text-subheading font-normal tracking-display text-graphite">
                   {f.title}
@@ -214,8 +232,8 @@ export default function HomePage() {
 
       {/* ── How it works ─────────────────────────────────────────────────── */}
       <section className="section bg-ash" id="how-it-works">
-        <div className="mx-auto max-w-site px-6">
-          <div className="mb-16 max-w-xl">
+        <div className="mx-auto max-w-site px-8 lg:px-16">
+          <div className="scroll-reveal mb-20 max-w-xl">
             <p className="mb-3 font-body text-sm font-medium uppercase tracking-widest text-brass">
               Process
             </p>
@@ -226,10 +244,10 @@ export default function HomePage() {
 
           <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-4">
             {HOW_IT_WORKS.map((step, i) => (
-              <div key={step.step} className="relative">
+              <div key={step.step} className="scroll-reveal relative" style={{ animationDelay: `${i * 0.12}s` }}>
                 {/* Connector line */}
                 {i < HOW_IT_WORKS.length - 1 && (
-                  <div className="absolute top-5 left-12 hidden h-px w-full bg-mist lg:block" />
+                  <div className="draw-line absolute top-5 left-12 hidden h-px bg-mist lg:block" />
                 )}
                 <div className="relative">
                   <div className="mb-4 inline-flex h-10 w-10 items-center justify-center border border-mist bg-canvas">
@@ -250,11 +268,11 @@ export default function HomePage() {
 
       {/* ── Featured asymmetric card ──────────────────────────────────────── */}
       <section className="section bg-canvas">
-        <div className="mx-auto max-w-site px-6">
+        <div className="mx-auto max-w-site px-8 lg:px-16">
           <div className="grid grid-cols-1 gap-0 overflow-hidden lg:grid-cols-5">
             {/* Ivory asymmetric card */}
             <div
-              className="bg-ivory px-16 py-20 lg:col-span-3"
+              className="scroll-reveal-left bg-ivory px-16 py-24 lg:col-span-3 lg:px-20 lg:py-28"
               style={{ borderRadius: "6px 0px 0px 0px" }}
             >
               <p className="mb-4 font-body text-sm font-medium uppercase tracking-widest text-brass">
@@ -280,7 +298,7 @@ export default function HomePage() {
             </div>
 
             {/* Right — call sample card */}
-            <div className="bg-graphite px-10 py-16 lg:col-span-2">
+            <div className="scroll-reveal-right bg-graphite px-12 py-20 lg:col-span-2">
               <p className="mb-6 font-body text-xs uppercase tracking-widest text-white/40">
                 Live call — in progress
               </p>
@@ -292,8 +310,8 @@ export default function HomePage() {
 
       {/* ── Pricing ──────────────────────────────────────────────────────── */}
       <section className="section bg-ash" id="pricing">
-        <div className="mx-auto max-w-site px-6">
-          <div className="mb-16 max-w-xl">
+        <div className="mx-auto max-w-site px-8 lg:px-16">
+          <div className="scroll-reveal mb-20 max-w-xl">
             <p className="mb-3 font-body text-sm font-medium uppercase tracking-widest text-brass">
               Pricing
             </p>
@@ -302,15 +320,16 @@ export default function HomePage() {
             </h2>
           </div>
 
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            {PRICING.map((plan) => (
+          <div className="grid grid-cols-1 gap-8 lg:grid-cols-3 lg:gap-10">
+            {PRICING.map((plan, i) => (
               <div
                 key={plan.name}
-                className={`flex flex-col p-8 ${
+                className={`scroll-reveal-scale hover-lift flex flex-col p-10 lg:p-12 ${
                   plan.highlight
                     ? "bg-graphite text-canvas"
                     : "border border-mist bg-canvas"
                 }`}
+                style={{ animationDelay: `${i * 0.12}s` }}
               >
                 <div className="mb-6">
                   <div
@@ -355,7 +374,7 @@ export default function HomePage() {
                         plan.highlight ? "text-white/80" : "text-steel"
                       }`}
                     >
-                      <span className={plan.highlight ? "text-ember" : "text-ember"}>◎</span>
+                      <span className="text-ember">◎</span>
                       {f}
                     </li>
                   ))}
@@ -379,9 +398,9 @@ export default function HomePage() {
 
       {/* ── Contact / CTA ────────────────────────────────────────────────── */}
       <section className="section bg-canvas" id="contact">
-        <div className="mx-auto max-w-site px-6">
-          <div className="grid grid-cols-1 gap-16 lg:grid-cols-2 lg:items-start">
-            <div>
+        <div className="mx-auto max-w-site px-8 lg:px-16">
+          <div className="grid grid-cols-1 gap-20 lg:grid-cols-2 lg:gap-32 lg:items-start">
+            <div className="scroll-reveal">
               <p className="mb-3 font-body text-sm font-medium uppercase tracking-widest text-brass">
                 Get in touch
               </p>
@@ -429,38 +448,38 @@ export default function HomePage() {
 
 function StatCluster() {
   return (
-    <div className="relative h-full min-h-[360px]">
+    <div className="relative h-full min-h-[480px]">
       {/* Main stats card */}
-      <div className="absolute left-0 top-0 w-72 rounded-2xl border border-mist bg-canvas p-6 shadow-none">
-        <p className="mb-4 font-body text-xs uppercase tracking-widest text-slate">
+      <div className="stat-card-1 absolute left-0 top-0 w-80 rounded-2xl border border-mist bg-canvas p-7 shadow-none">
+        <p className="mb-5 font-body text-xs uppercase tracking-widest text-slate">
           This week
         </p>
-        <div className="space-y-3">
+        <div className="space-y-4">
           <StatRow label="Calls completed" value="1,247" accent />
           <StatRow label="Answer rate" value="89%" />
           <StatRow label="Avg. duration" value="3m 42s" />
           <StatRow label="No answer" value="84" />
           <StatRow label="Voicemail" value="53" />
         </div>
-        <div className="mt-5 h-px bg-mist" />
-        <div className="mt-4 flex items-center justify-between">
+        <div className="mt-6 h-px bg-mist" />
+        <div className="mt-5 flex items-center justify-between">
           <span className="font-body text-xs text-slate">vs last week</span>
           <span className="font-body text-xs font-medium text-ember">+14%</span>
         </div>
       </div>
 
       {/* Call-in-progress card */}
-      <div className="absolute right-0 top-12 w-64 border border-mist bg-canvas p-5">
-        <div className="mb-3 flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-ember" />
+      <div className="stat-card-2 absolute right-0 top-28 w-64 border border-mist bg-canvas p-6">
+        <div className="mb-4 flex items-center gap-2">
+          <span className="pulse-ring inline-block h-2 w-2 bg-ember" />
           <span className="font-body text-xs text-ember">Live call</span>
         </div>
         <p className="mb-1 font-display text-sm font-normal tracking-display text-graphite">
           Booking confirmation
         </p>
         <p className="font-body text-xs text-slate">+971 50 123 4567 · 1m 23s</p>
-        <div className="mt-4 space-y-1.5">
-          <div className="rounded bg-fog px-3 py-2">
+        <div className="mt-5 space-y-1.5">
+          <div className="rounded bg-fog px-3 py-2.5">
             <p className="font-body text-xs text-steel">
               &ldquo;Your reservation for 3 nights is confirmed&hellip;&rdquo;
             </p>
@@ -469,7 +488,7 @@ function StatCluster() {
       </div>
 
       {/* Outcome card */}
-      <div className="absolute bottom-0 left-16 w-56 border border-mist bg-ivory p-4">
+      <div className="stat-card-3 absolute bottom-0 left-20 w-60 border border-mist bg-ivory p-5">
         <p className="mb-2 font-body text-xs uppercase tracking-widest text-brass">
           Last call
         </p>
@@ -538,11 +557,20 @@ function CallSample() {
           </div>
         </div>
       ))}
-      <div className="mt-2 flex items-center gap-2">
-        <div className="h-1 flex-1 rounded bg-white/10">
-          <div className="h-1 w-3/5 rounded bg-ember" />
-        </div>
-        <span className="font-body text-xs text-white/40">2m 14s</span>
+      <div className="mt-5 flex items-end gap-[3px]">
+        {[8,14,20,16,10,22,12,18,24,10,16,20,14,8,18,22,12,16,10,20,14,18,8,16].map((h, i) => (
+          <div
+            key={i}
+            className="waveform-bar"
+            style={{
+              height: `${h}px`,
+              animationName: `waveBar${(i % 4) + 1}`,
+              animationDuration: `${0.55 + (i % 3) * 0.18}s`,
+              animationDelay: `${i * 0.055}s`,
+            }}
+          />
+        ))}
+        <span className="ml-3 self-center font-body text-xs text-white/40">2m 14s</span>
       </div>
     </div>
   );

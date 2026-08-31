@@ -40,7 +40,7 @@ const config: Config = {
         full: "200px",
       },
       maxWidth: {
-        site: "1200px",
+        site: "1440px",
       },
       spacing: {
         section: "80px",

@@ -65,7 +65,7 @@ export default function LoginPage() {
 
             {/* Hotel / Client login → client dashboard */}
             <EntryCard
-              href="/client/"
+              href={process.env.NEXT_PUBLIC_CLIENT_URL ?? "/client"}
               iconBg="bg-ember"
               iconText="H"
               title="Hotel / Business"
@@ -74,7 +74,7 @@ export default function LoginPage() {
 
             {/* Platform admin → admin dashboard */}
             <EntryCard
-              href="/admin/"
+              href={process.env.NEXT_PUBLIC_ADMIN_URL ?? "/admin"}
               iconBg="bg-graphite"
               iconText="A"
               title="Platform Admin"
