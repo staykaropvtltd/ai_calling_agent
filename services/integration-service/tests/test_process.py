@@ -155,3 +155,64 @@ def test_process_event_function_directly_success():
     body = _IS.ProcessEventRequest(job_id="j7", event_type="connected", payload=None)
     result = _IS.process_event(body)
     assert result.status == "processed"
+
+
+# ── outbound_dial handler ─────────────────────────────────────────────────────
+
+
+def test_outbound_dial_missing_caller_id_returns_422():
+    """outbound_dial without caller_id in payload is a client error, not retryable."""
+    response = client.post(
+        "/internal/v1/process",
+        headers={"X-Internal-API-Token": _TOKEN},
+        json={
+            "job_id": "od-1",
+            "event_type": "outbound_dial",
+            "payload": {"phone_number": "+917001234567", "tenant_id": "1"},
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_outbound_dial_missing_phone_number_returns_422():
+    response = client.post(
+        "/internal/v1/process",
+        headers={"X-Internal-API-Token": _TOKEN},
+        json={
+            "job_id": "od-2",
+            "event_type": "outbound_dial",
+            "payload": {"caller_id": 42, "tenant_id": "1"},
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_outbound_dial_simulation_fails_closed_when_api_unreachable(monkeypatch):
+    """When API_BASE_URL is unreachable, outbound_dial returns 503 so the worker
+    retries rather than silently dropping the call.  No Exotel creds are set,
+    so this exercises the simulation code path (no real Exotel call)."""
+    monkeypatch.setenv("API_BASE_URL", "http://localhost:19999")
+    for key in ("EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_ACCOUNT_SID", "EXOTEL_CALLER_ID"):
+        monkeypatch.delenv(key, raising=False)
+
+    # Re-import os inside the module so the patched values are visible
+    import importlib
+    import sys
+    # The module reads env vars at call-time (not import-time), so no reload needed.
+    response = client.post(
+        "/internal/v1/process",
+        headers={"X-Internal-API-Token": _TOKEN},
+        json={
+            "job_id": "od-3",
+            "event_type": "outbound_dial",
+            "payload": {
+                "caller_id": 42,
+                "phone_number": "+917001234567",
+                "tenant_id": "1",
+                "campaign_id": "camp-1",
+                "campaign_contact_id": "cc-1",
+            },
+        },
+    )
+    # 503: internal API unreachable → worker should schedule a retry, not drop the job
+    assert response.status_code == 503

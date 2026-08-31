@@ -55,6 +55,7 @@ class CallState(BaseModel):
 class InternalCalls(Protocol):
     async def create(self, call: CallCreation) -> None: ...
     async def get(self, call_id: str) -> CallState | None: ...
+    async def get_by_provider_id(self, provider_call_id: str) -> CallState | None: ...
     async def finalize(self, call_id: str, finalization: CallFinalization) -> None: ...
 
 
@@ -87,6 +88,21 @@ class InternalCallsClient:
 
     async def get(self, call_id: str) -> CallState | None:
         response = await self._request("GET", f"/internal/v1/calls/{call_id}")
+        if response.status_code == 404:
+            return None
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise InternalApiError("Internal calls API request failed") from exc
+        return CallState.model_validate(response.json())
+
+    async def get_by_provider_id(self, provider_call_id: str) -> CallState | None:
+        """Look up a Call record by the telephony provider's own call ID
+        (Exotel CallSid).  Returns None for unknown IDs — callers must treat
+        this as 'not an outbound call we initiated' rather than an error."""
+        response = await self._request(
+            "GET", f"/internal/v1/calls/by-provider/{provider_call_id}"
+        )
         if response.status_code == 404:
             return None
         try:

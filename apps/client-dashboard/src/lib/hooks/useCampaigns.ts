@@ -23,11 +23,15 @@ export function useCampaignsQuery(
   });
 }
 
-export function useCampaignQuery(id: string | undefined) {
+export function useCampaignQuery(
+  id: string | undefined,
+  options: { refetchInterval?: number } = {},
+) {
   return useQuery({
     queryKey: [KEY, id],
     queryFn: () => getCampaign(id as string),
     enabled: !!id,
+    refetchInterval: options.refetchInterval,
   });
 }
 

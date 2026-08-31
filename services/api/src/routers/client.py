@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import get_current_user
 from src.database import get_db
-from src.models import Call, CallTurn, Campaign, CampaignContact, Caller, Client, Customer, PhoneNumberRoute, User
+from src.models import Call, CallJob, CallTurn, Campaign, CampaignContact, Caller, Client, Customer, PhoneNumberRoute, User
 from src.tenant import get_tenant_scoped_db
 
 logger = logging.getLogger("staykaro.client")
@@ -847,11 +847,101 @@ async def update_campaign(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"status must be one of {sorted(VALID_CAMPAIGN_STATUSES)}",
         )
+
+    was_running = campaign.status == "running"
     for field, value in updates.items():
         setattr(campaign, field, value)
+
+    # Queue outbound calls when campaign transitions to "running".
+    # This covers both a fresh start (draft/scheduled → running) and a resume
+    # (paused → running).  We never re-queue contacts that are already in
+    # progress (call_request_id is set) or permanently done (completed/skipped).
+    if campaign.status == "running" and not was_running:
+        await _queue_campaign_contacts(db, campaign, client_id)
+
     await db.commit()
     await db.refresh(campaign)
     return campaign  # type: ignore[return-value]
+
+
+async def _queue_campaign_contacts(db: AsyncSession, campaign: Campaign, client_id: int) -> None:
+    """Create Caller work-items and CallJob records for every contact that is
+    ready to be called.  Covers both first-time queuing (status='queued',
+    no call_request_id) and retry-eligible contacts (failed/no_answer,
+    attempts < max_retries).  All writes land in the same transaction as the
+    campaign status update so no contacts are silently dropped on failure."""
+    from datetime import UTC, datetime
+
+    # Fresh contacts: imported but never dialled
+    fresh_result = await db.execute(
+        select(CampaignContact)
+        .where(
+            CampaignContact.campaign_id == campaign.id,
+            CampaignContact.status == "queued",
+            CampaignContact.call_request_id.is_(None),
+        )
+    )
+    fresh = list(fresh_result.scalars().all())
+
+    # Retry-eligible contacts: failed/no_answer but haven't exhausted retries
+    retry_result = await db.execute(
+        select(CampaignContact)
+        .where(
+            CampaignContact.campaign_id == campaign.id,
+            CampaignContact.status.in_(["failed", "no_answer"]),
+            CampaignContact.attempts < campaign.max_retries,
+        )
+    )
+    retries = list(retry_result.scalars().all())
+
+    if not fresh and not retries:
+        logger.info("Campaign %s has no contacts to queue", campaign.id)
+        return
+
+    queued_count = 0
+    for contact in fresh + retries:
+        customer = await db.get(Customer, contact.customer_id)
+        if customer is None or not customer.phone:
+            contact.status = "skipped"
+            continue
+
+        caller = Caller(
+            client_id=client_id,
+            customer_id=customer.id,
+            phone_number=customer.phone,
+            customer_name=customer.name,
+            status="queued",
+            call_type="outbound",
+            # is_simulation is set to True by the integration-service when
+            # Exotel credentials are absent — starts as False here.
+            is_simulation=False,
+        )
+        db.add(caller)
+        await db.flush()  # populate caller.id before referencing it in the job
+
+        contact.call_request_id = caller.id
+        contact.status = "dialing"
+
+        job = CallJob(
+            tenant_id=str(client_id),
+            event_type="outbound_dial",
+            payload={
+                "caller_id": caller.id,
+                "campaign_contact_id": str(contact.id),
+                "campaign_id": str(campaign.id),
+                "phone_number": customer.phone,
+                "customer_name": customer.name or "",
+                "tenant_id": str(client_id),
+            },
+        )
+        db.add(job)
+        queued_count += 1
+
+    if queued_count:
+        campaign.queued_count = (campaign.queued_count or 0) + queued_count
+        logger.info(
+            "Campaign %s: queued %d outbound call(s)", campaign.id, queued_count
+        )
 
 
 # ── CSV/Sheet Upload ──────────────────────────────────────────────────────────

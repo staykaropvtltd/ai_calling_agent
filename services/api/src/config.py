@@ -65,6 +65,18 @@ API_CORS_ORIGINS: list[str] = [
 # internal request is rejected, never accidentally left open.
 INTERNAL_API_TOKEN: str = os.getenv("INTERNAL_API_TOKEN", "")
 
+# ── Exotel outbound calling ───────────────────────────────────────────────────
+# All four must be set for real outbound calls. If any is absent the
+# integration-service falls back to simulation mode and marks calls with
+# is_simulation=True so they are never counted as real calls in analytics.
+EXOTEL_API_KEY: str = os.getenv("EXOTEL_API_KEY", "")
+EXOTEL_API_TOKEN: str = os.getenv("EXOTEL_API_TOKEN", "")
+EXOTEL_ACCOUNT_SID: str = os.getenv("EXOTEL_ACCOUNT_SID", "")
+# Virtual number shown to the called party (must be registered in Exotel)
+EXOTEL_CALLER_ID: str = os.getenv("EXOTEL_CALLER_ID", "")
+# Full URL Exotel POSTs outbound call status events to (voice-gateway endpoint)
+EXOTEL_OUTBOUND_CALLBACK_URL: str = os.getenv("EXOTEL_OUTBOUND_CALLBACK_URL", "")
+
 # ── Admin credentials ─────────────────────────────────────────────────────────
 # docker-compose does not forward API_USERNAME / API_PASSWORD to the container,
 # but it does forward API_SECRET_KEY. Fall back to API_SECRET_KEY so the
