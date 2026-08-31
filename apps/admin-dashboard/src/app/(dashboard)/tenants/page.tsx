@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { RoleGuard } from "../../../lib/auth/RoleGuard";
 import { useTenantsQuery } from "../../../lib/hooks/useTenants";
@@ -11,8 +10,12 @@ import { Pagination } from "../../../components/Pagination";
 import { ErrorBanner } from "../../../components/ErrorBanner";
 import { Spinner } from "../../../components/Spinner";
 import { StatusBadge } from "../../../components/StatusBadge";
-import { buttonClass, inputClass } from "../../../components/FormField";
+import { PageHeader } from "../../../components/PageHeader";
+import { AnchorButton } from "../../../components/Button";
 import type { Tenant } from "../../../lib/types/tenant";
+
+const SELECT_CLASS =
+  "rounded-xl border border-mist bg-canvas px-3 py-2 text-sm text-graphite focus:border-graphite focus:outline-none";
 
 export default function TenantsPage() {
   return (
@@ -36,39 +39,45 @@ function TenantsList() {
   });
 
   const columns: Column<Tenant>[] = [
-    { key: "name", header: "Name", render: (t) => t.name },
-    { key: "slug", header: "Slug", render: (t) => t.slug },
+    {
+      key: "name",
+      header: "Client name",
+      render: (t) => <span className="font-medium text-graphite">{t.name}</span>,
+    },
+    {
+      key: "slug",
+      header: "Slug",
+      render: (t) => <span className="font-mono text-sm">{t.slug}</span>,
+    },
     { key: "plan", header: "Plan", render: (t) => <StatusBadge value={t.plan} /> },
     { key: "status", header: "Status", render: (t) => <StatusBadge value={t.status} /> },
-    { key: "max_calls", header: "Max concurrent calls", render: (t) => t.max_concurrent_calls },
+    {
+      key: "max_calls",
+      header: "Max concurrent",
+      render: (t) => <span className="text-slate-neutral">{t.max_concurrent_calls}</span>,
+    },
   ];
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-slate-900">Tenants</h1>
-        <Link href="/tenants/new" className={buttonClass}>
-          New tenant
-        </Link>
-      </div>
+      <PageHeader
+        eyebrow="Platform"
+        title="Hotel Clients"
+        description="All tenants registered on StayKaro."
+        actions={<AnchorButton href="/tenants/new">New client</AnchorButton>}
+      />
 
-      <div className="mb-4 flex gap-3">
+      <div className="mb-5 flex flex-wrap gap-3">
         <input
           placeholder="Search by name…"
           value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
-          className={`${inputClass} w-64`}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+          className="w-64 rounded-xl border border-mist bg-canvas px-4 py-2 text-sm text-graphite focus:border-graphite focus:outline-none placeholder:text-slate-neutral"
         />
         <select
           value={status}
-          onChange={(e) => {
-            setStatus(e.target.value);
-            setPage(1);
-          }}
-          className={inputClass}
+          onChange={(e) => { setStatus(e.target.value); setPage(1); }}
+          className={SELECT_CLASS}
         >
           <option value="">All statuses</option>
           <option value="active">Active</option>
@@ -77,13 +86,13 @@ function TenantsList() {
         </select>
       </div>
 
-      <Card>
+      <Card padding={false}>
         {isLoading ? (
-          <div className="flex justify-center py-10">
+          <div className="flex justify-center py-12">
             <Spinner />
           </div>
         ) : isError ? (
-          <div className="p-4">
+          <div className="p-6">
             <ErrorBanner error={error} />
           </div>
         ) : (
@@ -93,7 +102,7 @@ function TenantsList() {
               rows={data?.data ?? []}
               rowKey={(t) => t.tenant_id}
               onRowClick={(t) => router.push(`/tenants/${t.tenant_id}`)}
-              emptyMessage="No tenants yet."
+              emptyMessage="No clients yet."
             />
             <Pagination page={page} totalPages={data?.total_pages ?? 0} onPageChange={setPage} />
           </>

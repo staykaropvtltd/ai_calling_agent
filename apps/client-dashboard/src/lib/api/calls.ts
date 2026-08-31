@@ -5,24 +5,23 @@ import type { CallLogEntry, CreateCallRequest, CreateCallResponse } from "../typ
 export interface CallListParams {
   page?: number;
   per_page?: number;
+  search?: string;
 }
 
-// /admin/calls is tenant-scoped server-side for tenant_admin tokens
-// (services/api/src/routers/admin.py's list_calls ignores any tenant_id
-// query param for that role and binds to the JWT's client_id instead) —
-// this app never needs to pass one.
+// /client/calls is scoped to the authenticated user's tenant by the backend
+// (_require_client + RLS). This app never needs to pass a tenant_id param.
 export async function listCalls(params: CallListParams = {}): Promise<PaginatedResponse<CallLogEntry>> {
-  const { data } = await client.get<PaginatedResponse<CallLogEntry>>("/admin/calls", { params });
+  const { data } = await client.get<PaginatedResponse<CallLogEntry>>("/client/calls", { params });
   return data;
 }
 
 export async function getCall(callId: number): Promise<CallLogEntry> {
-  const { data } = await client.get<CallLogEntry>(`/admin/calls/${callId}`);
+  const { data } = await client.get<CallLogEntry>(`/client/calls/${callId}`);
   return data;
 }
 
 // POST /call — places an outbound AI call. Open to any authenticated role
-// (tenant_admin and agent alike), unlike the /admin/* routes above.
+// (tenant_admin and agent alike).
 export async function createCall(payload: CreateCallRequest): Promise<CreateCallResponse> {
   const { data } = await client.post<CreateCallResponse>("/call", payload);
   return data;

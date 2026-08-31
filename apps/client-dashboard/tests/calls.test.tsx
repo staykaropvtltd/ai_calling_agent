@@ -99,9 +99,9 @@ describe("NewCallPage", () => {
 });
 
 describe("CallsPage — role gating", () => {
-  it("shows access-denied for agent (no /admin/calls access server-side)", () => {
+  it("renders for agent role (/client/calls allows both tenant_admin and agent)", () => {
     vi.mocked(useAuthModule.useAuth).mockReturnValue(agentAuth);
     renderWithQuery(<CallsPage />);
-    expect(screen.getByText(/access denied/i)).toBeInTheDocument();
+    expect(screen.queryByText(/access denied/i)).not.toBeInTheDocument();
   });
 });

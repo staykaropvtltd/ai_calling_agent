@@ -1,0 +1,93 @@
+warning: in the working copy of 'apps/admin-dashboard/src/app/(dashboard)/calls/[id]/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/app/(dashboard)/calls/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/app/(dashboard)/layout.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/app/(dashboard)/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/app/(dashboard)/tenants/[id]/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/app/(dashboard)/tenants/new/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/app/(dashboard)/tenants/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/app/(dashboard)/users/[id]/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/app/(dashboard)/users/new/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/app/(dashboard)/users/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/app/globals.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/app/login/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/components/Card.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/components/ErrorBanner.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/components/FormField.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/components/Pagination.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/components/Spinner.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/components/StatusBadge.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/src/components/Table.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/admin-dashboard/tailwind.config.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/app/(dashboard)/calls/[id]/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/app/(dashboard)/calls/new/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/app/(dashboard)/calls/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/app/(dashboard)/layout.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/app/(dashboard)/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/app/(dashboard)/users/[id]/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/app/(dashboard)/users/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/app/globals.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/app/login/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/components/Card.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/components/ErrorBanner.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/components/FormField.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/components/Pagination.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/components/Spinner.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/components/StatusBadge.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/components/Table.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/lib/api/calls.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/src/lib/api/users.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/client-dashboard/tailwind.config.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'services/api/src/models.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'services/api/src/routers/internal.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'services/api/tests/test_internal_calls.py', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/apps/admin-dashboard/src/app/(dashboard)/calls/[id]/page.tsx b/apps/admin-dashboard/src/app/(dashboard)/calls/[id]/page.tsx[m
+[1mindex 836dd10..5388386 100644[m
+[1m--- a/apps/admin-dashboard/src/app/(dashboard)/calls/[id]/page.tsx[m
+[1m+++ b/apps/admin-dashboard/src/app/(dashboard)/calls/[id]/page.tsx[m
+[36m@@ -1,10 +1,13 @@[m
+ "use client";[m
+ [m
+[32m+[m[32mimport Link from "next/link";[m
+ import { useParams } from "next/navigation";[m
+ import { useCallQuery } from "../../../../lib/hooks/useCalls";[m
+ import { Card } from "../../../../components/Card";[m
+ import { ErrorBanner } from "../../../../components/ErrorBanner";[m
+ import { Spinner } from "../../../../components/Spinner";[m
+[32m+[m[32mimport { PageHeader } from "../../../../components/PageHeader";[m
+[32m+[m[32mimport { Button } from "../../../../components/Button";[m
+ [m
+ export default function CallDetailPage() {[m
+   const params = useParams<{ id: string }>();[m
+[36m@@ -14,13 +17,17 @@[m [mexport default function CallDetailPage() {[m
+ [m
+   if (isLoading) {[m
+     return ([m
+[31m-      <div className="flex justify-center py-10">[m
+[32m+[m[32m      <div className="flex justify-center py-12">[m
+         <Spinner />[m
+       </div>[m
+     );[m
+   }[m
+   if (isError || !call) {[m
+[31m-    return <ErrorBanner error={error} />;[m
+[32m+[m[32m    return ([m
+[32m+[m[32m      <div className="max-w-lg">[m
+[32m+[m[32m        <ErrorBanner error={error} />[m
+[32m+[m[32m      </div>[m
+[32m+[m[32m    );[m
+   }[m
+ [m
+   const rows: Array<[string, string]> = [[m
+[36m@@ -34,13 +41,24 @@[m [mexport default function CallDetailPage() {[m
+ [m
+   return ([m
+     <div className="max-w-lg">[m
+[31m-      <h1 className="mb-6 text-xl font-semibold text-slate-900">Call #{call.id}</h1>[m
+[31m-      <Card className="p-6">[m
+[31m-        <dl className="flex flex-col gap-3 text-sm">[m
+[32m+[m[32m      <PageHeader[m
+[32m+[m[32m        eyebrow="Calls"[m
+[32m+[m[32m        title={`Call #${call.id}`}[m
+[32m+[m[32m        actions={[m
+[32m+[m[32m          <Link href="/calls">[m
+[32m+[m[32m            <Button variant="ghos

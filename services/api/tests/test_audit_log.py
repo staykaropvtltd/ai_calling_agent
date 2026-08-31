@@ -49,7 +49,9 @@ async def test_update_client_writes_before_and_after(
     api_client: AsyncClient, db_session: AsyncSession, super_admin_headers: dict
 ):
     created = await api_client.post(
-        "/admin/clients", json={"name": "Old Name", "slug": "rename-me"}, headers=super_admin_headers
+        "/admin/clients",
+        json={"name": "Old Name", "slug": "rename-me"},
+        headers=super_admin_headers,
     )
     client_id = created.json()["id"]
 
@@ -87,12 +89,19 @@ async def test_user_role_change_is_captured_in_before_after(
     api_client: AsyncClient, db_session: AsyncSession, super_admin_headers: dict
 ):
     tenant = await api_client.post(
-        "/admin/clients", json={"name": "T", "slug": "role-change-tenant"}, headers=super_admin_headers
+        "/admin/clients",
+        json={"name": "T", "slug": "role-change-tenant"},
+        headers=super_admin_headers,
     )
     tenant_id = tenant.json()["id"]
     created = await api_client.post(
         "/admin/users",
-        json={"email": "promote-me@x.com", "full_name": "X", "role": "agent", "tenant_id": tenant_id},
+        json={
+            "email": "promote-me@x.com",
+            "full_name": "X",
+            "role": "agent",
+            "tenant_id": tenant_id,
+        },
         headers=super_admin_headers,
     )
     user_id = created.json()["user_id"]
@@ -114,7 +123,12 @@ async def test_user_audit_snapshot_never_contains_password_hash(
 ):
     r = await api_client.post(
         "/admin/users",
-        json={"email": "secret@x.com", "full_name": "X", "role": "agent", "password": "supersecret1"},
+        json={
+            "email": "secret@x.com",
+            "full_name": "X",
+            "role": "agent",
+            "password": "supersecret1",
+        },
         headers=super_admin_headers,
     )
     assert r.status_code == 201
@@ -159,7 +173,10 @@ async def test_audit_logs_filterable_by_action(api_client: AsyncClient, super_ad
 
 
 async def test_tenant_admin_only_sees_own_tenant_audit_logs(
-    api_client: AsyncClient, db_session: AsyncSession, super_admin_headers: dict, make_tenant_admin_headers
+    api_client: AsyncClient,
+    db_session: AsyncSession,
+    super_admin_headers: dict,
+    make_tenant_admin_headers,
 ):
     own = await api_client.post(
         "/admin/clients", json={"name": "Own", "slug": "audit-own"}, headers=super_admin_headers
@@ -170,8 +187,12 @@ async def test_tenant_admin_only_sees_own_tenant_audit_logs(
     own_id, other_id = own.json()["id"], other.json()["id"]
 
     # A mutation on each tenant, so each has an audit row.
-    await api_client.put(f"/admin/clients/{own_id}", json={"name": "Own2"}, headers=super_admin_headers)
-    await api_client.put(f"/admin/clients/{other_id}", json={"name": "Other2"}, headers=super_admin_headers)
+    await api_client.put(
+        f"/admin/clients/{own_id}", json={"name": "Own2"}, headers=super_admin_headers
+    )
+    await api_client.put(
+        f"/admin/clients/{other_id}", json={"name": "Other2"}, headers=super_admin_headers
+    )
 
     headers = make_tenant_admin_headers(client_id=own_id)
     r = await api_client.get("/admin/audit-logs", headers=headers)
@@ -188,7 +209,9 @@ async def test_tenant_admin_cannot_escalate_audit_logs_via_query_param(
         "/admin/clients", json={"name": "Own", "slug": "audit-esc-own"}, headers=super_admin_headers
     )
     other = await api_client.post(
-        "/admin/clients", json={"name": "Other", "slug": "audit-esc-other"}, headers=super_admin_headers
+        "/admin/clients",
+        json={"name": "Other", "slug": "audit-esc-other"},
+        headers=super_admin_headers,
     )
     own_id, other_id = own.json()["id"], other.json()["id"]
 

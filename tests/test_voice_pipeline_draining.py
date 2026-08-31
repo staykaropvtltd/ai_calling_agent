@@ -73,7 +73,10 @@ def test_new_connection_rejected_while_draining():
     app = _build_app(is_draining=lambda: True)
     client = TestClient(app)
 
-    with pytest.raises(WebSocketDisconnect) as exc_info, client.websocket_connect("/ws/some-call-id"):
+    with (
+        pytest.raises(WebSocketDisconnect) as exc_info,
+        client.websocket_connect("/ws/some-call-id"),
+    ):
         pass
 
     assert exc_info.value.code == 1013
@@ -106,7 +109,10 @@ def test_not_draining_allows_connection_past_the_gate():
     app = _build_app(is_draining=lambda: False, allow_unresolved=False)
     client = TestClient(app)
 
-    with pytest.raises(WebSocketDisconnect) as exc_info, client.websocket_connect("/ws/some-call-id"):
+    with (
+        pytest.raises(WebSocketDisconnect) as exc_info,
+        client.websocket_connect("/ws/some-call-id"),
+    ):
         pass
 
     assert exc_info.value.code == 4404

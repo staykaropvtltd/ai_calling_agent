@@ -4,6 +4,7 @@ export interface Column<T> {
   header: string;
   render: (row: T) => ReactNode;
   key: string;
+  width?: string;
 }
 
 interface TableProps<T> {
@@ -17,7 +18,7 @@ interface TableProps<T> {
 export function Table<T>({ columns, rows, rowKey, onRowClick, emptyMessage }: TableProps<T>) {
   if (rows.length === 0) {
     return (
-      <div className="px-4 py-10 text-center text-sm text-slate-500">
+      <div className="px-6 py-12 text-center text-sm text-slate-neutral">
         {emptyMessage ?? "No results."}
       </div>
     );
@@ -25,28 +26,33 @@ export function Table<T>({ columns, rows, rowKey, onRowClick, emptyMessage }: Ta
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-slate-200">
-        <thead className="bg-slate-50">
-          <tr>
+      <table className="min-w-full">
+        <thead>
+          <tr className="border-b border-mist">
             {columns.map((col) => (
               <th
                 key={col.key}
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
+                style={col.width ? { width: col.width } : undefined}
+                className="px-6 py-3 text-left text-[11px] font-medium uppercase tracking-widest text-slate-neutral"
               >
                 {col.header}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 bg-white">
-          {rows.map((row) => (
+        <tbody>
+          {rows.map((row, i) => (
             <tr
               key={rowKey(row)}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
-              className={onRowClick ? "cursor-pointer hover:bg-slate-50" : undefined}
+              className={[
+                "border-b border-mist/60 transition-colors",
+                i % 2 === 0 ? "bg-canvas" : "bg-fog/40",
+                onRowClick ? "cursor-pointer hover:bg-ash" : "",
+              ].join(" ")}
             >
               {columns.map((col) => (
-                <td key={col.key} className="whitespace-nowrap px-4 py-2 text-sm text-slate-700">
+                <td key={col.key} className="px-6 py-3 text-sm text-graphite">
                   {col.render(row)}
                 </td>
               ))}

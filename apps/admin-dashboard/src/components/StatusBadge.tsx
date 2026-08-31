@@ -1,21 +1,27 @@
 const COLORS: Record<string, string> = {
-  active: "bg-green-100 text-green-800",
-  suspended: "bg-amber-100 text-amber-800",
-  inactive: "bg-slate-200 text-slate-600",
-  super_admin: "bg-purple-100 text-purple-800",
-  tenant_admin: "bg-blue-100 text-blue-800",
-  agent: "bg-slate-100 text-slate-700",
-  starter: "bg-slate-100 text-slate-700",
-  pro: "bg-blue-100 text-blue-800",
-  enterprise: "bg-purple-100 text-purple-800",
+  active: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  suspended: "border-amber-200 bg-amber-50 text-amber-800",
+  inactive: "border-mist bg-ash text-slate-neutral",
+  coming_soon: "border-mist bg-fog text-slate-neutral",
+  available: "border-mist bg-canvas text-steel",
+  super_admin: "border-graphite bg-graphite text-white",
+  tenant_admin: "border-steel bg-steel text-white",
+  agent: "border-mist bg-ash text-steel",
+  starter: "border-mist bg-fog text-steel",
+  pro: "border-brass bg-ivory text-brass",
+  enterprise: "border-graphite bg-graphite text-white",
+  active_exotel: "border-emerald-200 bg-emerald-50 text-emerald-800",
 };
 
 export function StatusBadge({ value }: { value: string | null | undefined }) {
-  if (!value) return <span className="text-slate-400">—</span>;
-  const color = COLORS[value] ?? "bg-slate-100 text-slate-700";
+  if (!value) return <span className="text-slate-neutral">—</span>;
+  const displayValue = value.replace(/_/g, " ");
+  const color = COLORS[value] ?? "border-mist bg-fog text-steel";
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${color}`}>
-      {value}
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-display font-medium ${color}`}
+    >
+      {displayValue}
     </span>
   );
 }

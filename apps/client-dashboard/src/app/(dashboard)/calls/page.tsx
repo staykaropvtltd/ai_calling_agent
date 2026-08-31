@@ -2,18 +2,22 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { RoleGuard } from "../../../lib/auth/RoleGuard";
 import { useCallsQuery } from "../../../lib/hooks/useCalls";
+import { useClientLocale } from "../../../lib/hooks/useClientLocale";
 import { Card } from "../../../components/Card";
 import { Table, type Column } from "../../../components/Table";
 import { Pagination } from "../../../components/Pagination";
 import { ErrorBanner } from "../../../components/ErrorBanner";
 import { Spinner } from "../../../components/Spinner";
+import { PageHeader } from "../../../components/PageHeader";
+import { Button } from "../../../components/Button";
 import type { CallLogEntry } from "../../../lib/types/call";
 
 export default function CallsPage() {
   return (
-    <RoleGuard allowedRoles={["tenant_admin"]}>
+    <RoleGuard allowedRoles={["tenant_admin", "agent"]}>
       <CallsList />
     </RoleGuard>
   );
@@ -22,11 +26,30 @@ export default function CallsPage() {
 function CallsList() {
   const router = useRouter();
   const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const { formatDateTime } = useClientLocale();
 
-  const { data, isLoading, isError, error } = useCallsQuery({ page, per_page: 20 });
+  function handleSearchChange(value: string) {
+    setSearch(value);
+    setPage(1);
+    setDebouncedSearch(value);
+  }
+
+  const { data, isLoading, isError, error } = useCallsQuery({
+    page,
+    per_page: 20,
+    search: debouncedSearch || undefined,
+  });
 
   const columns: Column<CallLogEntry>[] = [
-    { key: "customer_name", header: "Customer", render: (c) => c.customer_name ?? "—" },
+    {
+      key: "customer_name",
+      header: "Customer",
+      render: (c) => (
+        <span className="font-medium text-graphite">{c.customer_name ?? "—"}</span>
+      ),
+    },
     { key: "phone_number", header: "Phone", render: (c) => c.phone_number ?? "—" },
     { key: "hotel_name", header: "Hotel", render: (c) => c.hotel_name ?? "—" },
     { key: "check_in_date", header: "Check-in", render: (c) => c.check_in_date ?? "—" },
@@ -34,21 +57,44 @@ function CallsList() {
     {
       key: "created_at",
       header: "Created",
-      render: (c) => (c.created_at ? new Date(c.created_at).toLocaleString() : "—"),
+      render: (c) => (
+        <span className="text-slate-neutral">{formatDateTime(c.created_at)}</span>
+      ),
     },
   ];
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-semibold text-slate-900">Calls</h1>
+      <PageHeader
+        eyebrow="Calls"
+        title="Call Log"
+        description="All outbound AI calls placed through StayKaro."
+        actions={
+          <Link href="/calls/new">
+            <Button variant="accent">New Call</Button>
+          </Link>
+        }
+      />
 
-      <Card>
+      {/* Search */}
+      <div className="mb-4">
+        <input
+          type="search"
+          placeholder="Search by customer name or phone…"
+          value={search}
+          onChange={(e) => handleSearchChange(e.target.value)}
+          className="w-full max-w-xs rounded-xl border border-mist bg-canvas px-4 py-2 text-sm placeholder:text-slate-neutral focus:border-steel focus:outline-none"
+          aria-label="Search calls"
+        />
+      </div>
+
+      <Card padding={false}>
         {isLoading ? (
-          <div className="flex justify-center py-10">
+          <div className="flex justify-center py-12">
             <Spinner />
           </div>
         ) : isError ? (
-          <div className="p-4">
+          <div className="p-6">
             <ErrorBanner error={error} />
           </div>
         ) : (
@@ -58,9 +104,15 @@ function CallsList() {
               rows={data?.data ?? []}
               rowKey={(c) => String(c.id)}
               onRowClick={(c) => router.push(`/calls/${c.id}`)}
-              emptyMessage="No calls yet."
+              emptyMessage={
+                debouncedSearch ? "No calls match your search." : "No calls yet."
+              }
             />
-            <Pagination page={page} totalPages={data?.total_pages ?? 0} onPageChange={setPage} />
+            <Pagination
+              page={page}
+              totalPages={data?.total_pages ?? 0}
+              onPageChange={setPage}
+            />
           </>
         )}
       </Card>

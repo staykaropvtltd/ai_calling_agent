@@ -11,8 +11,12 @@ import { Pagination } from "../../../components/Pagination";
 import { ErrorBanner } from "../../../components/ErrorBanner";
 import { Spinner } from "../../../components/Spinner";
 import { StatusBadge } from "../../../components/StatusBadge";
-import { buttonClass, inputClass } from "../../../components/FormField";
+import { PageHeader } from "../../../components/PageHeader";
+import { AnchorButton } from "../../../components/Button";
 import type { TenantUser } from "../../../lib/types/user";
+
+const SELECT_CLASS =
+  "rounded-xl border border-mist bg-canvas px-3 py-2 text-sm text-graphite focus:border-graphite focus:outline-none";
 
 export default function UsersPage() {
   const { user } = useAuth();
@@ -30,76 +34,64 @@ export default function UsersPage() {
     role: role || undefined,
     status: status || undefined,
     // tenant_admin tokens are scoped server-side regardless of this param
-    // (services/api/src/routers/admin.py's list_users ignores it for them).
     tenant_id: isSuperAdmin ? tenantId || undefined : undefined,
   });
 
   const columns: Column<TenantUser>[] = [
-    { key: "email", header: "Email", render: (u) => u.email },
-    { key: "full_name", header: "Name", render: (u) => u.full_name },
+    {
+      key: "email",
+      header: "Email",
+      render: (u) => <span className="font-medium text-graphite">{u.email}</span>,
+    },
+    { key: "full_name", header: "Name", render: (u) => u.full_name || "—" },
     { key: "role", header: "Role", render: (u) => <StatusBadge value={u.role} /> },
     { key: "status", header: "Status", render: (u) => <StatusBadge value={u.status} /> },
     ...(isSuperAdmin
-      ? [{ key: "tenant_id", header: "Tenant ID", render: (u: TenantUser) => u.tenant_id ?? "—" }]
+      ? [{ key: "tenant_id", header: "Tenant ID", render: (u: TenantUser) => <span className="font-mono text-xs text-slate-neutral">{u.tenant_id ?? "—"}</span> }]
       : []),
   ];
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-slate-900">Users</h1>
-        {isSuperAdmin ? (
-          <Link href="/users/new" className={buttonClass}>
-            New user
-          </Link>
-        ) : null}
-      </div>
+      <PageHeader
+        eyebrow="Platform"
+        title="Users"
+        description="All users across all hotel clients."
+        actions={
+          isSuperAdmin ? (
+            <AnchorButton href="/users/new">New user</AnchorButton>
+          ) : undefined
+        }
+      />
 
-      <div className="mb-4 flex flex-wrap gap-3">
+      <div className="mb-5 flex flex-wrap gap-3">
         {isSuperAdmin ? (
           <input
             placeholder="Filter by tenant ID…"
             value={tenantId}
-            onChange={(e) => {
-              setTenantId(e.target.value);
-              setPage(1);
-            }}
-            className={`${inputClass} w-48`}
+            onChange={(e) => { setTenantId(e.target.value); setPage(1); }}
+            className="w-48 rounded-xl border border-mist bg-canvas px-4 py-2 text-sm text-graphite focus:border-graphite focus:outline-none placeholder:text-slate-neutral"
           />
         ) : null}
-        <select
-          value={role}
-          onChange={(e) => {
-            setRole(e.target.value);
-            setPage(1);
-          }}
-          className={inputClass}
-        >
+        <select value={role} onChange={(e) => { setRole(e.target.value); setPage(1); }} className={SELECT_CLASS}>
           <option value="">All roles</option>
           <option value="tenant_admin">Tenant admin</option>
           <option value="agent">Agent</option>
         </select>
-        <select
-          value={status}
-          onChange={(e) => {
-            setStatus(e.target.value);
-            setPage(1);
-          }}
-          className={inputClass}
-        >
+        <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className={SELECT_CLASS}>
           <option value="">All statuses</option>
           <option value="active">Active</option>
           <option value="suspended">Suspended</option>
         </select>
       </div>
 
-      <Card>
+      <Card padding={false}>
         {isLoading ? (
-          <div className="flex justify-center py-10">
+          <div className="flex justify-center py-12">
             <Spinner />
           </div>
         ) : isError ? (
-          <div className="p-4">
+          <div className="p-6">
             <ErrorBanner error={error} />
           </div>
         ) : (

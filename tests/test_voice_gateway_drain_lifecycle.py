@@ -32,7 +32,9 @@ if _VG not in sys.path:
 _saved_redis_url = os.environ.pop("REDIS_URL", None)
 try:
     _gw_main_path = Path(_VG) / "src" / "main.py"
-    _gw_spec = importlib.util.spec_from_file_location("_voice_gateway_main_drain_test", str(_gw_main_path))
+    _gw_spec = importlib.util.spec_from_file_location(
+        "_voice_gateway_main_drain_test", str(_gw_main_path)
+    )
     _GW_MAIN = importlib.util.module_from_spec(_gw_spec)
     sys.modules["_voice_gateway_main_drain_test"] = _GW_MAIN
     _gw_spec.loader.exec_module(_GW_MAIN)  # type: ignore[union-attr]

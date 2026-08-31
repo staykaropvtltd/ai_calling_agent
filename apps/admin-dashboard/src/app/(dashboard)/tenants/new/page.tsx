@@ -7,7 +7,9 @@ import { RoleGuard } from "../../../../lib/auth/RoleGuard";
 import { useCreateTenant } from "../../../../lib/hooks/useTenants";
 import { Card } from "../../../../components/Card";
 import { ErrorBanner } from "../../../../components/ErrorBanner";
-import { buttonClass, FormField, inputClass, secondaryButtonClass } from "../../../../components/FormField";
+import { FormField, inputClass } from "../../../../components/FormField";
+import { PageHeader } from "../../../../components/PageHeader";
+import { Button } from "../../../../components/Button";
 import type { TenantPlan } from "../../../../lib/types/tenant";
 
 export default function NewTenantPage() {
@@ -42,20 +44,22 @@ function NewTenantForm() {
 
   return (
     <div className="max-w-lg">
-      <h1 className="mb-6 text-xl font-semibold text-slate-900">New tenant</h1>
-      <Card className="p-6">
+      <PageHeader eyebrow="Clients" title="New hotel client" />
+
+      <Card>
         {createTenant.isError ? (
-          <div className="mb-4">
+          <div className="mb-5">
             <ErrorBanner error={createTenant.error} />
           </div>
         ) : null}
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
           <FormField label="Name" htmlFor="name">
             <input
               id="name"
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
+              placeholder="Grand Palace Hotel"
               className={inputClass}
             />
           </FormField>
@@ -67,16 +71,12 @@ function NewTenantForm() {
               title="Lowercase letters, numbers and hyphens only"
               value={slug}
               onChange={(e) => setSlug(e.target.value)}
+              placeholder="grand-palace"
               className={inputClass}
             />
           </FormField>
           <FormField label="Plan" htmlFor="plan">
-            <select
-              id="plan"
-              value={plan}
-              onChange={(e) => setPlan(e.target.value as TenantPlan)}
-              className={inputClass}
-            >
+            <select id="plan" value={plan} onChange={(e) => setPlan(e.target.value as TenantPlan)} className={inputClass}>
               <option value="starter">Starter</option>
               <option value="pro">Pro</option>
               <option value="enterprise">Enterprise</option>
@@ -104,13 +104,17 @@ function NewTenantForm() {
             />
           </FormField>
 
-          <div className="mt-2 flex gap-3">
-            <button type="submit" disabled={createTenant.isPending} className={buttonClass}>
-              {createTenant.isPending ? "Creating…" : "Create tenant"}
+          <div className="flex gap-3 pt-2">
+            <button
+              type="submit"
+              disabled={createTenant.isPending}
+              className="bg-graphite px-5 py-2.5 font-display text-sm font-medium text-white transition-colors hover:bg-steel disabled:opacity-50"
+            >
+              {createTenant.isPending ? "Creating…" : "Create client"}
             </button>
-            <button type="button" onClick={() => router.back()} className={secondaryButtonClass}>
+            <Button type="button" variant="ghost" onClick={() => router.back()}>
               Cancel
-            </button>
+            </Button>
           </div>
         </form>
       </Card>

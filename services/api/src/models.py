@@ -2,6 +2,7 @@ import uuid as _uuid
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -28,17 +29,12 @@ class Client(Base):
     """
     Represents a tenant/client organisation using the Staykaro platform.
     Maps to /admin/clients endpoints (NH-06).
-    New columns (slug, plan, status, max_concurrent_calls, created_at, updated_at)
-    are added with server-side defaults so existing rows in a live database
-    remain valid after a schema refresh via create_all on a fresh deployment.
     """
 
     __tablename__ = "clients"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
-    # slug: URL-safe unique identifier for the tenant. Nullable in DB so that
-    # rows created before this column was added don't violate NOT NULL.
     slug = Column(String(100), unique=True, nullable=True, index=True)
     plan = Column(String(50), server_default="starter")  # starter | pro | enterprise
     status = Column(String(20), server_default="active")  # active | suspended | inactive
@@ -48,6 +44,13 @@ class Client(Base):
     max_concurrent_calls = Column(Integer, server_default="10")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # Internationalisation fields (migration a1b2c3d4e5f6). Nullable so
+    # existing rows remain valid; defaults applied in the client router.
+    country = Column(String(2), nullable=True)  # ISO 3166-1 α-2: "AE", "IN", "US"
+    timezone = Column(String(100), nullable=True)  # IANA: "Asia/Dubai", "Asia/Kolkata"
+    currency = Column(String(3), nullable=True)  # ISO 4217: "AED", "INR", "USD"
+    default_language = Column(String(10), nullable=True)  # BCP 47: "en", "ar", "hi"
+    phone_country_code = Column(String(5), nullable=True)  # "+971", "+91", "+1"
 
     __table_args__ = (
         CheckConstraint("plan IN ('starter', 'pro', 'enterprise')", name="ck_clients_plan"),
@@ -56,15 +59,13 @@ class Client(Base):
 
     users = relationship("User", back_populates="client")
     callers = relationship("Caller", back_populates="client")
+    customers = relationship("Customer", back_populates="client")
 
 
 class User(Base):
     """
     Admin/operator users managed through /admin/users (NH-06).
-    password_hash (bcrypt) backs real per-user login at /auth/login (NK-05) —
-    the single shared API_PASSWORD credential is being phased out in favour
-    of this table. Nullable so existing seed/service rows without a login
-    (e.g. rows created before NK-05) remain valid.
+    password_hash (bcrypt) backs real per-user login at /auth/login (NK-05).
     """
 
     __tablename__ = "admin_users"
@@ -88,16 +89,77 @@ class User(Base):
     client = relationship("Client", back_populates="users")
 
 
+class Customer(Base):
+    """
+    A deduplicated contact/customer record scoped to a single tenant.
+    Introduced in Phase 1 (migration c3d4e5f6a7b8) to give call records,
+    campaigns, and conversation history a stable entity to attach to — rather
+    than embedding customer fields inline on every call_request row.
+
+    phone is stored in E.164 format (+CCNNNNN). The combination
+    (client_id, phone) is unique: within a tenant the same phone number always
+    resolves to the same customer, allowing safe upsert behaviour.
+
+    client_id mirrors the call_requests pattern (Integer FK to clients.id,
+    cast to text for the RLS tenant_isolation policy).
+    """
+
+    __tablename__ = "customers"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    name = Column(String(255), nullable=True)
+    phone = Column(String(50), nullable=False)  # E.164: "+971501234567"
+    email = Column(String(255), nullable=True)
+    language_code = Column(String(10), nullable=True)  # BCP 47: "en", "ar", "hi"
+    timezone = Column(String(100), nullable=True)  # IANA timezone
+    country_code = Column(String(2), nullable=True)  # ISO 3166-1 α-2
+    notes = Column(Text, nullable=True)
+    external_id = Column(String(255), nullable=True)  # opaque CRM / PMS reference
+    metadata_json = Column(_JSONB, nullable=True)  # arbitrary extra fields (JSONB)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        # Unique phone per tenant — basis for safe upsert
+        Index("uq_customers_client_phone", "client_id", "phone", unique=True),
+        Index("idx_customers_client_id", "client_id"),
+    )
+
+    client = relationship("Client", back_populates="customers")
+    call_requests = relationship("Caller", back_populates="customer")
+
+
 class Caller(Base):
     """
-    Inbound call requests persisted by the /call endpoint.
-    client_id links a call to a Client for per-tenant stats (NH-06 stats endpoint).
-    Nullable so calls created before this column existed remain valid.
+    Represents a call work-item: either a single outbound call request (POST
+    /call) or a row imported from a campaign contact list.
+
+    Phase 1 additions (migration c3d4e5f6a7b8):
+      status           — the call's lifecycle state (see CALL_REQUEST_STATUSES)
+      call_type        — outbound | inbound
+      is_simulation    — True when processed by a local dev/test provider, not
+                         a real telephony carrier. A simulated call MUST NEVER
+                         be presented to the client as a real completed call.
+      customer_id      — FK to customers.id, populated by the dialler or manually
+      telephony_call_id — logical reference to the calls.call_id created by the
+                         voice gateway when this work-item is actually dialled.
+                         Not a DB FK (avoids requiring the voice session to exist
+                         before the work-item is created); enforced by the dialler.
+      connection_status — whether the call was attempted and whether the remote
+                         party picked up (independent of the conversation outcome).
+      failure_reason   — machine-readable cause when connection_status is
+                         'failed_pre_connect', or when no_answer / voicemail.
+      duration_seconds — wall-clock seconds of the connected conversation.
+      recording_url    — storage URL for the call recording, if captured.
+      notes            — free-form operator notes attached after the call.
+      outcome          — human-readable result of the completed conversation.
     """
 
     __tablename__ = "call_requests"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Legacy fields — kept as-is for backward compatibility with existing rows
     customer_name = Column(String)
     phone_number = Column(String)
     hotel_name = Column(String)
@@ -106,15 +168,106 @@ class Caller(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # ── Phase 1 fields ─────────────────────────────────────────────────────────
+
+    # Call lifecycle status. server_default='pending' so existing rows
+    # that pre-date this column get the truthful "we don't know what
+    # happened to this" state rather than a falsely-positive terminal state.
+    status = Column(String(30), nullable=False, server_default="pending")
+
+    call_type = Column(String(20), nullable=False, server_default="outbound")
+
+    # False = processed by a real telephony carrier (Exotel, Twilio, etc.).
+    # True  = processed by a local dev/test simulation — MUST NOT appear as
+    #         a real call in any client-facing report or analytics.
+    is_simulation = Column(Boolean, nullable=False, server_default="0")
+
+    # FK to customers.id — populated by the dialler or during import.
+    # Nullable: legacy rows and rows created without phone-to-customer
+    # resolution have no customer linked yet.
+    customer_id = Column(String(36), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
+
+    # Logical reference to the voice-gateway Call record for this work-item.
+    # Not a DB FK because the Call row may not exist at import/queue time.
+    # Populated by the dialler once the call is initiated.
+    telephony_call_id = Column(String(36), nullable=True)
+
+    # Whether the dial attempt reached a connected state.
+    # not_attempted: never dialled (pending/cancelled/invalid number pre-dial)
+    # attempted:     dialled but no answer / went to voicemail
+    # connected:     remote party answered and conversation began
+    # failed_pre_connect: technical failure before ring (provider error, etc.)
+    connection_status = Column(String(30), nullable=False, server_default="not_attempted")
+
+    # Machine-readable failure reason. NULL when connection_status='connected'.
+    # Values: invalid_number | no_answer | voicemail | network_error |
+    #         provider_error | cancelled | unknown
+    failure_reason = Column(String(50), nullable=True)
+
+    duration_seconds = Column(Integer, nullable=True)
+    recording_url = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+
+    # Conversation outcome — set after the call completes.
+    # Values: completed_natural | caller_hangup | agent_finished | no_answer |
+    #         voicemail | escalated | failed | cancelled
+    outcome = Column(String(50), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ("
+            "'pending', 'queued', 'dialing', 'ringing', 'connected', "
+            "'in_progress', 'completed', 'failed', 'cancelled', "
+            "'no_answer', 'voicemail')",
+            name="ck_call_requests_status",
+        ),
+        CheckConstraint(
+            "call_type IN ('inbound', 'outbound')",
+            name="ck_call_requests_call_type",
+        ),
+        CheckConstraint(
+            "connection_status IN "
+            "('not_attempted', 'attempted', 'connected', 'failed_pre_connect')",
+            name="ck_call_requests_connection_status",
+        ),
+    )
+
     client = relationship("Client", back_populates="callers")
+    customer = relationship(
+        "Customer",
+        back_populates="call_requests",
+        foreign_keys=[customer_id],
+    )
 
 
 class Call(Base):
     """
-    Authoritative record of a single voice call lifecycle, created by the voice
-    gateway when a provider (Exotel etc.) reports the call as connected.
+    Authoritative record of a single voice-telephony session, created by the
+    voice gateway when a provider (Exotel, Twilio, etc.) reports a call.
     call_id is a UUID assigned by the gateway; provider_call_id is the
-    telephony provider's own identifier (e.g. Exotel CallSid).
+    provider's own identifier (e.g. Exotel CallSid).
+
+    Phase 1 additions (migration c3d4e5f6a7b8):
+      is_simulation    — True when the call was handled by a local dev/test
+                         pipeline (Whisper + rule-based + pyttsx3) rather than
+                         a real carrier. MUST be passed by the voice gateway on
+                         creation and MUST NOT be overridden by the finalize step.
+      connection_status — whether the remote party answered.
+                         server_default='connected': all pre-Phase-1 rows were
+                         created by the gateway only when an inbound call was
+                         already live, so they were all connected.
+      call_request_id  — optional back-reference to the call_requests row that
+                         originated this telephony session (for outbound calls
+                         dispatched by the dialler). NULL for inbound calls and
+                         for pre-Phase-1 rows.
+
+    Status values (extended in Phase 1):
+      active     — call in progress
+      completed  — conversation finished normally (both parties present)
+      failed     — technical failure prevented or ended the call
+      no_answer  — call was placed but remote party did not answer
+      voicemail  — call reached voicemail (not a live conversation)
+      cancelled  — call was cancelled before it was initiated
     """
 
     __tablename__ = "calls"
@@ -123,14 +276,38 @@ class Call(Base):
     tenant_id = Column(String(255), nullable=False, index=True)
     agent_id = Column(String(255), nullable=False)
     provider_call_id = Column(String(255), nullable=True, index=True)
-    status = Column(String(20), server_default="active")  # active | completed | failed
+    status = Column(String(20), server_default="active")
     started_at = Column(DateTime(timezone=True), nullable=False)
     ended_at = Column(DateTime(timezone=True), nullable=True)
     end_reason = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # ── Phase 1 fields ─────────────────────────────────────────────────────────
+
+    # False = real carrier; True = local simulation. Passed at creation time
+    # by the voice gateway; never altered by finalize.
+    is_simulation = Column(Boolean, nullable=False, server_default="0")
+
+    # Whether the remote party answered. Pre-Phase-1 rows are all 'connected'
+    # (gateway only created Call rows for live inbound calls).
+    connection_status = Column(String(30), nullable=False, server_default="connected")
+
+    # FK to the call_requests row that triggered this session (outbound only).
+    # NULL for inbound calls and all pre-Phase-1 rows.
+    call_request_id = Column(
+        Integer, ForeignKey("call_requests.id", ondelete="SET NULL"), nullable=True
+    )
+
     __table_args__ = (
-        CheckConstraint("status IN ('active', 'completed', 'failed')", name="ck_calls_status"),
+        CheckConstraint(
+            "status IN ('active', 'completed', 'failed', 'no_answer', 'voicemail', 'cancelled')",
+            name="ck_calls_status",
+        ),
+        CheckConstraint(
+            "connection_status IN "
+            "('not_attempted', 'attempted', 'connected', 'failed_pre_connect')",
+            name="ck_calls_connection_status",
+        ),
         Index("idx_calls_tenant_started", "tenant_id", "started_at"),
     )
 
@@ -146,8 +323,7 @@ class Call(Base):
 class CallTurn(Base):
     """
     One row per conversational turn — one caller utterance or one agent
-    response. Written by the voice gateway as SH-11 (turn management) lands;
-    this is the durable side of what call_id + turn events produce.
+    response. Written by the voice gateway as SH-11 (turn management) lands.
     Database Design §3 (call_turns) · Owned by: Nishkala.
     """
 
@@ -195,8 +371,7 @@ class CallEvent(Base):
 class AuditLog(Base):
     """
     One row per sensitive action — role changes, cross-tenant access attempts,
-    admin actions on a client account (NK-16). Written by admin/internal
-    routers whenever a mutating, security-relevant endpoint is hit.
+    admin actions on a client account (NK-16).
     Database Design §5 (audit_logs) · Owned by: Nishkala.
     """
 
@@ -215,24 +390,17 @@ class AuditLog(Base):
 
 class CallJob(Base):
     """
-    Phase 6 — durable background job/event record. One row per operational
-    event a webhook/callback wants processed off the request path (worker +
-    integration-service pick these up via services/api's internal job API).
+    Phase 6 — durable background job/event record.
 
     Deliberately NOT the same table as CallEvent: CallEvent is an immutable
-    audit trail ("this happened during a call") with no lifecycle of its own;
-    a CallJob is mutable work-in-progress with explicit state, attempt
-    counting, and retry scheduling. Conflating the two would mean either
-    bolting job-control columns onto an audit log, or losing job semantics —
-    kept separate per the Phase 6 design decision.
+    audit trail with no lifecycle of its own; a CallJob is mutable
+    work-in-progress with explicit state, attempt counting, and retry
+    scheduling.
 
-    The partial unique index on (provider_call_id, event_type) — see the
-    Phase 6 migration — is the authoritative idempotency guarantee: a
-    duplicate webhook delivery hits a unique-constraint violation on INSERT,
-    not a race-prone read-then-write check. Both tenant_id and call_id are
-    nullable because the "connected" event fires before routing has resolved
-    a tenant or a call has been created — a job can still be durably recorded
-    and deduplicated before either exists.
+    The partial unique index on (provider_call_id, event_type) is the
+    authoritative idempotency guarantee: a duplicate webhook delivery hits a
+    unique-constraint violation on INSERT, not a race-prone read-then-write
+    check.
     """
 
     __tablename__ = "call_jobs"
@@ -256,9 +424,6 @@ class CallJob(Base):
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
-    # Claim/backoff gate: a job is eligible for claiming only once now() >=
-    # available_at. Set to now() on creation (immediately eligible), and
-    # pushed forward on a retryable failure per the worker's backoff policy.
     available_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     processed_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -270,13 +435,6 @@ class CallJob(Base):
         Index("idx_call_jobs_status_available", "status", "available_at"),
         Index("idx_call_jobs_tenant_status", "tenant_id", "status"),
         Index("idx_call_jobs_call_id", "call_id"),
-        # The authoritative idempotency guarantee (see routers/jobs.py's
-        # module docstring) — must be declared here, not only in the
-        # Alembic migration, since the unit test suite builds its schema
-        # from this model via Base.metadata.create_all (conftest.py), not
-        # from migrations. sqlite_where mirrors postgresql_where so the
-        # constraint is real (not silently absent) under both backends this
-        # repository actually runs against.
         Index(
             "uq_call_jobs_provider_event",
             "provider_call_id",

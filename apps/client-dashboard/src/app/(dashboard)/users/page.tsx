@@ -10,8 +10,11 @@ import { Pagination } from "../../../components/Pagination";
 import { ErrorBanner } from "../../../components/ErrorBanner";
 import { Spinner } from "../../../components/Spinner";
 import { StatusBadge } from "../../../components/StatusBadge";
-import { inputClass } from "../../../components/FormField";
+import { PageHeader } from "../../../components/PageHeader";
 import type { TenantUser } from "../../../lib/types/user";
+
+const SELECT_CLASS =
+  "rounded-xl border border-mist bg-canvas px-3 py-2 text-sm text-graphite focus:border-graphite focus:outline-none";
 
 export default function UsersPage() {
   return (
@@ -35,50 +38,66 @@ function UsersList() {
   });
 
   const columns: Column<TenantUser>[] = [
-    { key: "email", header: "Email", render: (u) => u.email },
-    { key: "full_name", header: "Name", render: (u) => u.full_name },
-    { key: "role", header: "Role", render: (u) => <StatusBadge value={u.role} /> },
-    { key: "status", header: "Status", render: (u) => <StatusBadge value={u.status} /> },
+    {
+      key: "email",
+      header: "Email",
+      render: (u) => <span className="font-medium text-graphite">{u.email}</span>,
+    },
+    {
+      key: "full_name",
+      header: "Name",
+      render: (u) => <span className="text-steel">{u.full_name || "—"}</span>,
+    },
+    {
+      key: "role",
+      header: "Role",
+      render: (u) => <StatusBadge value={u.role} />,
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (u) => <StatusBadge value={u.status} />,
+    },
   ];
+
+  function handleRoleChange(val: string) {
+    setRole(val);
+    setPage(1);
+  }
+
+  function handleStatusChange(val: string) {
+    setStatus(val);
+    setPage(1);
+  }
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-semibold text-slate-900">Users</h1>
+      <PageHeader
+        eyebrow="Management"
+        title="Users & Roles"
+        description="Manage who has access to this hotel's dashboard."
+      />
 
-      <div className="mb-4 flex flex-wrap gap-3">
-        <select
-          value={role}
-          onChange={(e) => {
-            setRole(e.target.value);
-            setPage(1);
-          }}
-          className={inputClass}
-        >
+      <div className="mb-5 flex flex-wrap gap-3">
+        <select value={role} onChange={(e) => handleRoleChange(e.target.value)} className={SELECT_CLASS}>
           <option value="">All roles</option>
-          <option value="tenant_admin">Tenant admin</option>
+          <option value="tenant_admin">Admin</option>
           <option value="agent">Agent</option>
         </select>
-        <select
-          value={status}
-          onChange={(e) => {
-            setStatus(e.target.value);
-            setPage(1);
-          }}
-          className={inputClass}
-        >
+        <select value={status} onChange={(e) => handleStatusChange(e.target.value)} className={SELECT_CLASS}>
           <option value="">All statuses</option>
           <option value="active">Active</option>
           <option value="suspended">Suspended</option>
         </select>
       </div>
 
-      <Card>
+      <Card padding={false}>
         {isLoading ? (
-          <div className="flex justify-center py-10">
+          <div className="flex justify-center py-12">
             <Spinner />
           </div>
         ) : isError ? (
-          <div className="p-4">
+          <div className="p-6">
             <ErrorBanner error={error} />
           </div>
         ) : (
@@ -88,7 +107,7 @@ function UsersList() {
               rows={data?.data ?? []}
               rowKey={(u) => u.user_id}
               onRowClick={(u) => router.push(`/users/${u.user_id}`)}
-              emptyMessage="No users yet."
+              emptyMessage="No users found."
             />
             <Pagination page={page} totalPages={data?.total_pages ?? 0} onPageChange={setPage} />
           </>

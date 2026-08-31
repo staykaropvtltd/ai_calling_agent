@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "../../../../lib/auth/useAuth";
 import { useDeleteUser, useUpdateUser, useUserQuery } from "../../../../lib/hooks/useUsers";
@@ -9,7 +10,9 @@ import { Card } from "../../../../components/Card";
 import { ErrorBanner } from "../../../../components/ErrorBanner";
 import { Spinner } from "../../../../components/Spinner";
 import { StatusBadge } from "../../../../components/StatusBadge";
-import { buttonClass, FormField, inputClass, secondaryButtonClass } from "../../../../components/FormField";
+import { FormField, inputClass } from "../../../../components/FormField";
+import { PageHeader } from "../../../../components/PageHeader";
+import { Button } from "../../../../components/Button";
 import type { TenantUser, UserStatus } from "../../../../lib/types/user";
 
 type EditableRole = "tenant_admin" | "agent";
@@ -26,13 +29,17 @@ export default function UserDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-10">
+      <div className="flex justify-center py-12">
         <Spinner />
       </div>
     );
   }
   if (isError || !targetUser) {
-    return <ErrorBanner error={error} />;
+    return (
+      <div className="max-w-lg">
+        <ErrorBanner error={error} />
+      </div>
+    );
   }
 
   const canEdit = viewer?.role === "super_admin";
@@ -44,18 +51,25 @@ export default function UserDetailPage() {
 
   return (
     <div className="max-w-lg">
-      <h1 className="mb-6 text-xl font-semibold text-slate-900">{targetUser.email}</h1>
+      <PageHeader
+        eyebrow="Users"
+        title={targetUser.full_name || targetUser.email}
+        actions={
+          <Link href="/users">
+            <Button variant="ghost" size="sm">← All users</Button>
+          </Link>
+        }
+      />
 
-      <Card className="p-6">
+      <Card>
         {updateUser.isError ? (
-          <div className="mb-4">
+          <div className="mb-5">
             <ErrorBanner error={updateUser.error} />
           </div>
         ) : null}
 
         {canEdit ? (
-          // Keyed by user_id so local form state initializes fresh from the
-          // loaded user with no effect needed.
+          // Keyed by user_id so form state re-initialises from the loaded user
           <UserEditForm
             key={targetUser.user_id}
             targetUser={targetUser}
@@ -64,8 +78,8 @@ export default function UserDetailPage() {
             isSaving={updateUser.isPending}
           />
         ) : (
-          <dl className="flex flex-col gap-3 text-sm">
-            <Row label="Full name" value={targetUser.full_name} />
+          <dl className="divide-y divide-mist">
+            <Row label="Full name" value={targetUser.full_name || "—"} />
             <Row label="Role" value={<StatusBadge value={targetUser.role} />} />
             <Row label="Status" value={<StatusBadge value={targetUser.status} />} />
           </dl>
@@ -95,44 +109,29 @@ function UserEditForm({ targetUser, onSave, onSuspend, isSaving }: UserEditFormP
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
       <FormField label="Full name" htmlFor="full_name">
-        <input
-          id="full_name"
-          value={fullName}
-          onChange={(e) => setFullName(e.target.value)}
-          className={inputClass}
-        />
+        <input id="full_name" value={fullName} onChange={(e) => setFullName(e.target.value)} className={inputClass} />
       </FormField>
       <FormField label="Role" htmlFor="role">
-        <select
-          id="role"
-          value={role}
-          onChange={(e) => setRole(e.target.value as EditableRole)}
-          className={inputClass}
-        >
+        <select id="role" value={role} onChange={(e) => setRole(e.target.value as EditableRole)} className={inputClass}>
           <option value="tenant_admin">Tenant admin</option>
           <option value="agent">Agent</option>
         </select>
       </FormField>
       <FormField label="Status" htmlFor="status">
-        <select
-          id="status"
-          value={status}
-          onChange={(e) => setStatus(e.target.value as UserStatus)}
-          className={inputClass}
-        >
+        <select id="status" value={status} onChange={(e) => setStatus(e.target.value as UserStatus)} className={inputClass}>
           <option value="active">Active</option>
           <option value="suspended">Suspended</option>
         </select>
       </FormField>
-      <div className="mt-2 flex gap-3">
-        <button type="submit" disabled={isSaving} className={buttonClass}>
+      <div className="flex gap-3 pt-2">
+        <button type="submit" disabled={isSaving} className="bg-graphite px-5 py-2.5 font-display text-sm font-medium text-white transition-colors hover:bg-steel disabled:opacity-50">
           {isSaving ? "Saving…" : "Save changes"}
         </button>
-        <button type="button" onClick={onSuspend} className={secondaryButtonClass}>
+        <Button type="button" variant="danger" onClick={onSuspend}>
           Suspend user
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -140,9 +139,9 @@ function UserEditForm({ targetUser, onSave, onSuspend, isSaving }: UserEditFormP
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="flex justify-between border-b border-slate-100 pb-2">
-      <dt className="text-slate-500">{label}</dt>
-      <dd className="text-slate-900">{value}</dd>
+    <div className="flex items-center justify-between py-3">
+      <dt className="text-xs font-medium uppercase tracking-widest text-slate-neutral">{label}</dt>
+      <dd className="text-sm text-graphite">{value}</dd>
     </div>
   );
 }

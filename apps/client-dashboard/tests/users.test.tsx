@@ -64,7 +64,7 @@ describe("UsersPage — read-only, no user-management actions", () => {
   it("lists a tenant_admin's own-tenant users with no create/edit affordance", async () => {
     vi.mocked(useAuthModule.useAuth).mockReturnValue(tenantAdminAuth);
     renderWithQuery(<UsersPage />);
-    await waitFor(() => expect(screen.queryByText("No users yet.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("No users found.")).toBeInTheDocument());
     // This app never lets any role create/edit/suspend a user — that's
     // restricted to super_admin server-side (services/api/src/routers/
     // admin.py's _require_super_admin on create/update/delete).

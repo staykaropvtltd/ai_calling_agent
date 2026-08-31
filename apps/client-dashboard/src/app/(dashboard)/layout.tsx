@@ -5,22 +5,54 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { RoleGuard } from "../../lib/auth/RoleGuard";
 import { useAuth } from "../../lib/auth/useAuth";
+import { useClientProfileQuery } from "../../lib/hooks/useSettings";
 import type { UserRole } from "../../lib/types/auth";
+
+interface NavGroup {
+  label?: string;
+  items: NavItem[];
+}
 
 interface NavItem {
   href: string;
   label: string;
   roles: UserRole[];
+  exact?: boolean;
 }
 
-// "agent" only ever gets to place calls — /admin/users and /admin/calls
-// require tenant_admin or super_admin (services/api/src/routers/admin.py's
-// _require_admin), so those nav items would just 403 for an agent token.
-const NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Overview", roles: ["tenant_admin", "agent"] },
-  { href: "/calls/new", label: "New call", roles: ["tenant_admin", "agent"] },
-  { href: "/calls", label: "Calls", roles: ["tenant_admin"] },
-  { href: "/users", label: "Users", roles: ["tenant_admin"] },
+const NAV_GROUPS: NavGroup[] = [
+  {
+    items: [
+      { href: "/", label: "Overview", roles: ["tenant_admin", "agent"], exact: true },
+      { href: "/calls", label: "Calls", roles: ["tenant_admin", "agent"] },
+      { href: "/calls/new", label: "New Call", roles: ["tenant_admin", "agent"] },
+    ],
+  },
+  {
+    label: "Analytics",
+    items: [
+      { href: "/analytics", label: "Analytics", roles: ["tenant_admin"] },
+    ],
+  },
+  {
+    label: "Management",
+    items: [
+      { href: "/ai-agent", label: "AI Agent", roles: ["tenant_admin"] },
+      { href: "/phone-numbers", label: "Phone Numbers", roles: ["tenant_admin"] },
+      { href: "/campaigns", label: "Campaigns", roles: ["tenant_admin"] },
+      { href: "/business-hours", label: "Business Hours", roles: ["tenant_admin"] },
+      { href: "/users", label: "Users & Roles", roles: ["tenant_admin"] },
+      { href: "/integrations", label: "Integrations", roles: ["tenant_admin"] },
+    ],
+  },
+  {
+    label: "Account",
+    items: [
+      { href: "/usage", label: "Usage", roles: ["tenant_admin"] },
+      { href: "/billing", label: "Billing & Plan", roles: ["tenant_admin"] },
+      { href: "/settings", label: "Settings", roles: ["tenant_admin"] },
+    ],
+  },
 ];
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
@@ -33,53 +65,113 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
 function DashboardShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
+  const { data: profile } = useClientProfileQuery();
   const pathname = usePathname();
   const router = useRouter();
 
   if (!user) return null;
-
-  const visibleItems = NAV_ITEMS.filter((item) => item.roles.includes(user.role));
 
   async function handleLogout() {
     await logout();
     router.push("/login");
   }
 
+  function isActive(item: NavItem): boolean {
+    if (item.exact) return pathname === item.href;
+    return pathname === item.href || pathname.startsWith(item.href + "/");
+  }
+
   return (
-    <div className="flex min-h-screen bg-slate-50">
-      <aside className="w-56 shrink-0 border-r border-slate-200 bg-white">
-        <div className="px-4 py-5 text-base font-semibold text-slate-900">Staykaro</div>
-        <nav className="flex flex-col gap-1 px-2">
-          {visibleItems.map((item) => {
-            const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+    <div className="flex min-h-screen bg-fog">
+      {/* Sidebar */}
+      <aside className="flex w-60 shrink-0 flex-col bg-graphite">
+        {/* Logo */}
+        <div className="flex items-center gap-3 px-6 py-5">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-ember">
+            <span className="font-display text-[10px] font-bold text-white">SK</span>
+          </div>
+          <div>
+            <div className="font-display text-sm font-semibold tracking-display text-white">
+              StayKaro
+            </div>
+            {profile?.tenant_name && (
+              <div className="text-[10px] text-white/40 truncate max-w-[120px]">
+                {profile.tenant_name}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="h-px bg-white/8 mx-4" />
+
+        {/* Navigation */}
+        <nav className="flex-1 overflow-y-auto px-3 py-4">
+          {NAV_GROUPS.map((group, gi) => {
+            const visibleItems = group.items.filter((item) =>
+              item.roles.includes(user.role),
+            );
+            if (visibleItems.length === 0) return null;
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`rounded-md px-3 py-2 text-sm font-medium ${
-                  active ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-                }`}
-              >
-                {item.label}
-              </Link>
+              <div key={gi} className={gi > 0 ? "mt-6" : ""}>
+                {group.label && (
+                  <div className="mb-1.5 px-3 text-[10px] font-medium uppercase tracking-widest text-white/30">
+                    {group.label}
+                  </div>
+                )}
+                <div className="flex flex-col gap-0.5">
+                  {visibleItems.map((item) => {
+                    const active = isActive(item);
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={[
+                          "flex items-center gap-2.5 rounded-full px-3 py-2 text-sm font-medium transition-colors",
+                          active
+                            ? "bg-ember text-white font-display"
+                            : "text-white/60 hover:bg-white/8 hover:text-white",
+                        ].join(" ")}
+                      >
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
         </nav>
-      </aside>
-      <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
-          <div className="text-sm text-slate-500">
-            {user.full_name} <span className="text-slate-300">·</span> {user.role}
+
+        {/* User info + signout */}
+        <div className="border-t border-white/8 px-4 py-4">
+          <div className="mb-2 flex items-center gap-2.5">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10">
+              <span className="font-display text-[10px] font-medium text-white">
+                {user.full_name?.charAt(0) ?? "?"}
+              </span>
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-xs font-medium text-white">
+                {user.full_name}
+              </div>
+              <div className="text-[10px] text-white/40">
+                {user.role === "tenant_admin" ? "Admin" : "Agent"}
+              </div>
+            </div>
           </div>
           <button
             type="button"
             onClick={handleLogout}
-            className="text-sm font-medium text-slate-500 hover:text-slate-900"
+            className="w-full rounded-lg px-3 py-1.5 text-left text-xs text-white/40 transition-colors hover:bg-white/8 hover:text-white/70"
           >
             Sign out
           </button>
-        </header>
-        <main className="flex-1 p-6">{children}</main>
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <main className="flex-1 overflow-auto p-8">{children}</main>
       </div>
     </div>
   );

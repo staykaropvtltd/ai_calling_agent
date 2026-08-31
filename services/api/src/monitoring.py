@@ -30,6 +30,7 @@ import logging
 import shutil
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -61,7 +62,9 @@ class MetricsRegistry:
         self._samples: deque[_Sample] = deque(maxlen=max_samples)
 
     def record(self, status_code: int, elapsed_ms: float) -> None:
-        self._samples.append(_Sample(at=time.monotonic(), status_code=status_code, elapsed_ms=elapsed_ms))
+        self._samples.append(
+            _Sample(at=time.monotonic(), status_code=status_code, elapsed_ms=elapsed_ms)
+        )
 
     def _recent(self) -> list[_Sample]:
         cutoff = time.monotonic() - self._window_seconds
@@ -150,7 +153,7 @@ _DISK_USAGE_THRESHOLD_PCT = 85.0  # "> 85%" (non-paging)
 _MIN_REQUESTS_FOR_ERROR_RATE_ALERT = 20  # avoid alerting on "1 error out of 1 request"
 
 
-def _disk_usage_pct(path: str = "/") -> float:
+def _get_disk_usage_pct(path: str = "/") -> float:
     """Disk usage of the filesystem *this process* sees. Inside a Docker
     container that's the container's own writable layer — a useful proxy
     for "is this service about to fail from ENOSPC", but NOT the same
@@ -168,6 +171,7 @@ def check_alerts(
     *,
     db_status: str,
     redis_status: str,
+    disk_usage_pct_fn: Callable[[], float] | None = None,
 ) -> list[Alert]:
     """Pure function: metrics + dependency health in, breached-threshold
     Alerts out. No I/O, no notification side effects — see check_and_notify
@@ -220,7 +224,8 @@ def check_alerts(
             )
         )
 
-    disk_pct = _disk_usage_pct()
+    _disk_usage_fn = disk_usage_pct_fn if disk_usage_pct_fn is not None else _get_disk_usage_pct
+    disk_pct = _disk_usage_fn()
     if disk_pct > _DISK_USAGE_THRESHOLD_PCT:
         alerts.append(
             Alert(
@@ -240,10 +245,16 @@ def check_and_notify(
     *,
     db_status: str,
     redis_status: str,
+    disk_usage_pct_fn: Callable[[], float] | None = None,
     notifier: Notifier | None = None,
 ) -> list[Alert]:
     notifier = notifier or LoggingNotifier()
-    alerts = check_alerts(metrics, db_status=db_status, redis_status=redis_status)
+    alerts = check_alerts(
+        metrics,
+        db_status=db_status,
+        redis_status=redis_status,
+        disk_usage_pct_fn=disk_usage_pct_fn,
+    )
     for alert in alerts:
         notifier.notify(alert)
     return alerts

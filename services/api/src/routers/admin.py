@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import get_current_user, hash_password
@@ -168,6 +168,15 @@ class CallResponse(BaseModel):
     check_out_date: Optional[str]
     client_id: Optional[int]
     created_at: Optional[datetime]
+    # Phase 1 fields — present on all rows after migration c3d4e5f6a7b8
+    status: Optional[str] = None
+    call_type: Optional[str] = None
+    is_simulation: Optional[bool] = None
+    customer_id: Optional[str] = None
+    connection_status: Optional[str] = None
+    failure_reason: Optional[str] = None
+    duration_seconds: Optional[int] = None
+    outcome: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -609,6 +618,7 @@ async def list_calls(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     tenant_id: Optional[int] = Query(None, description="Filter by client/tenant id"),
+    search: Optional[str] = Query(None, description="Search by customer name or phone number"),
     db: AsyncSession = Depends(get_tenant_scoped_db),
     user: dict = Depends(_require_admin),
 ) -> PaginatedCalls:
@@ -628,6 +638,14 @@ async def list_calls(
         # super_admin: apply the optional query param filter.
         if tenant_id is not None:
             stmt = stmt.where(Caller.client_id == tenant_id)
+
+    if search:
+        stmt = stmt.where(
+            or_(
+                Caller.customer_name.ilike(f"%{search}%"),
+                Caller.phone_number.ilike(f"%{search}%"),
+            )
+        )
 
     total: int = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     rows = (await db.execute(stmt.offset((page - 1) * per_page).limit(per_page))).scalars().all()
