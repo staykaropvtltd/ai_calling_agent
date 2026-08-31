@@ -1,0 +1,51 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-display: "PolySans", "Inter Tight", "Space Grotesk", "Inter", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: #ffffff;
+  color: #202020;
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+/* Asymmetric card — signature shape */
+.card-asymmetric {
+  border-radius: 6px 0px 0px 0px;
+}
+
+/* Section rhythm */
+.section {
+  padding-top: 80px;
+  padding-bottom: 80px;
+}
+
+/* Ember underline for inline links */
+.link-ember {
+  text-decoration-line: underline;
+  text-decoration-color: #ff682c;
+  text-underline-offset: 3px;
+}

@@ -14,14 +14,18 @@ import math
 from datetime import UTC, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import csv
+import io
+import uuid as _uuid
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import get_current_user
 from src.database import get_db
-from src.models import Caller, Client, Customer, PhoneNumberRoute, User
+from src.models import Call, CallTurn, Campaign, CampaignContact, Caller, Client, Customer, PhoneNumberRoute, User
 from src.tenant import get_tenant_scoped_db
 
 logger = logging.getLogger("staykaro.client")
@@ -641,3 +645,421 @@ async def update_customer(
     await db.commit()
     await db.refresh(customer)
     return customer  # type: ignore[return-value]
+
+
+# ── GET /client/calls/{id}/transcript ─────────────────────────────────────────
+
+
+class TranscriptTurnResponse(BaseModel):
+    turn_id: str
+    speaker: str  # caller | agent
+    text: str
+    started_at: Optional[datetime]
+    language_code: Optional[str]
+
+    model_config = {"from_attributes": True}
+
+
+@router.get("/calls/{call_id}/transcript", response_model=list[TranscriptTurnResponse])
+async def get_call_transcript(
+    call_id: int,
+    db: AsyncSession = Depends(get_tenant_scoped_db),
+    user: dict = Depends(_require_client),
+) -> list[TranscriptTurnResponse]:
+    """Returns the conversation transcript for a call request.
+
+    The Caller (call_request) record links to a Call record via
+    telephony_call_id. Call records own CallTurn rows. This endpoint
+    resolves that chain and returns turns ordered by started_at.
+
+    Returns an empty list when:
+    - the call has not been initiated yet (telephony_call_id is NULL)
+    - the voice gateway has not written any turns yet
+    - the Call record is not in this tenant's calls (tenant safety)
+    """
+    client_id = user["client_id"]
+    caller = await db.get(Caller, call_id)
+    if not caller or caller.client_id != client_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
+
+    if not caller.telephony_call_id:
+        return []
+
+    # Resolve the voice-gateway Call record for this call request.
+    # tenant_id on Call is str(client_id) — verify to prevent cross-tenant leakage.
+    call_row = (
+        await db.execute(
+            select(Call).where(
+                Call.call_id == caller.telephony_call_id,
+                Call.tenant_id == str(client_id),
+            )
+        )
+    ).scalar_one_or_none()
+
+    if not call_row:
+        return []
+
+    turn_rows = (
+        await db.execute(
+            select(CallTurn)
+            .where(CallTurn.call_id == call_row.call_id)
+            .order_by(CallTurn.started_at.asc())
+        )
+    ).scalars().all()
+
+    return [TranscriptTurnResponse.model_validate(t) for t in turn_rows]
+
+
+# ── Campaigns ─────────────────────────────────────────────────────────────────
+
+VALID_CAMPAIGN_STATUSES = {"draft", "scheduled", "running", "paused", "completed", "cancelled"}
+
+
+class CampaignCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    purpose: Optional[str] = None
+    scheduled_at: Optional[datetime] = None
+    max_retries: int = 2
+    retry_delay_minutes: int = 60
+
+
+class CampaignUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    purpose: Optional[str] = None
+    status: Optional[str] = None
+    scheduled_at: Optional[datetime] = None
+    max_retries: Optional[int] = None
+    retry_delay_minutes: Optional[int] = None
+
+
+class CampaignResponse(BaseModel):
+    id: str
+    client_id: int
+    name: str
+    description: Optional[str]
+    purpose: Optional[str]
+    status: str
+    scheduled_at: Optional[datetime]
+    max_retries: int
+    retry_delay_minutes: int
+    total_contacts: int
+    queued_count: int
+    completed_count: int
+    failed_count: int
+    no_answer_count: int
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
+    model_config = {"from_attributes": True}
+
+
+class PaginatedCampaigns(BaseModel):
+    data: list[CampaignResponse]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+
+
+@router.post("/campaigns", response_model=CampaignResponse, status_code=status.HTTP_201_CREATED)
+async def create_campaign(
+    body: CampaignCreate,
+    db: AsyncSession = Depends(get_tenant_scoped_db),
+    user: dict = Depends(_require_client_admin),
+) -> CampaignResponse:
+    client_id = user["client_id"]
+    campaign = Campaign(
+        id=str(_uuid.uuid4()),
+        client_id=client_id,
+        name=body.name,
+        description=body.description,
+        purpose=body.purpose,
+        scheduled_at=body.scheduled_at,
+        max_retries=body.max_retries,
+        retry_delay_minutes=body.retry_delay_minutes,
+        created_by=str(user.get("sub", "")),
+    )
+    db.add(campaign)
+    await db.commit()
+    await db.refresh(campaign)
+    return campaign  # type: ignore[return-value]
+
+
+@router.get("/campaigns", response_model=PaginatedCampaigns)
+async def list_campaigns(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    db: AsyncSession = Depends(get_tenant_scoped_db),
+    user: dict = Depends(_require_client_admin),
+) -> PaginatedCampaigns:
+    client_id = user["client_id"]
+    stmt = (
+        select(Campaign)
+        .where(Campaign.client_id == client_id)
+        .order_by(Campaign.created_at.desc())
+    )
+    if status_filter:
+        stmt = stmt.where(Campaign.status == status_filter)
+
+    total: int = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    rows = (await db.execute(stmt.offset((page - 1) * per_page).limit(per_page))).scalars().all()
+
+    return PaginatedCampaigns(
+        data=list(rows),
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=_paginate(total, page, per_page),
+    )
+
+
+@router.get("/campaigns/{campaign_id}", response_model=CampaignResponse)
+async def get_campaign(
+    campaign_id: str,
+    db: AsyncSession = Depends(get_tenant_scoped_db),
+    user: dict = Depends(_require_client_admin),
+) -> CampaignResponse:
+    client_id = user["client_id"]
+    campaign = await db.get(Campaign, campaign_id)
+    if not campaign or campaign.client_id != client_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    return campaign  # type: ignore[return-value]
+
+
+@router.put("/campaigns/{campaign_id}", response_model=CampaignResponse)
+async def update_campaign(
+    campaign_id: str,
+    body: CampaignUpdate,
+    db: AsyncSession = Depends(get_tenant_scoped_db),
+    user: dict = Depends(_require_client_admin),
+) -> CampaignResponse:
+    client_id = user["client_id"]
+    campaign = await db.get(Campaign, campaign_id)
+    if not campaign or campaign.client_id != client_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
+    updates = body.model_dump(exclude_none=True)
+    if "status" in updates and updates["status"] not in VALID_CAMPAIGN_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"status must be one of {sorted(VALID_CAMPAIGN_STATUSES)}",
+        )
+    for field, value in updates.items():
+        setattr(campaign, field, value)
+    await db.commit()
+    await db.refresh(campaign)
+    return campaign  # type: ignore[return-value]
+
+
+# ── CSV/Sheet Upload ──────────────────────────────────────────────────────────
+
+_MAX_CSV_ROWS = 5000
+_MAX_CSV_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+class UploadPreviewRow(BaseModel):
+    row_number: int
+    data: dict
+    error: Optional[str] = None
+
+
+class UploadPreviewResponse(BaseModel):
+    total_rows: int
+    valid_rows: int
+    invalid_rows: int
+    columns: list[str]
+    preview: list[UploadPreviewRow]
+
+
+class SheetImportRequest(BaseModel):
+    campaign_id: str
+    phone_column: str
+    name_column: Optional[str] = None
+    email_column: Optional[str] = None
+
+
+@router.post("/upload/preview", response_model=UploadPreviewResponse)
+async def preview_upload(
+    file: UploadFile = File(...),
+    user: dict = Depends(_require_client_admin),
+) -> UploadPreviewResponse:
+    """Parse an uploaded CSV and return a preview with column detection.
+    Does NOT create any database records — purely for UI preview + column mapping.
+    Accepts .csv files only (XLSX support requires openpyxl which is optional).
+    Max 10 MB / 5000 rows.
+    """
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .csv files are supported. Convert your Excel file to CSV first.",
+        )
+
+    raw = await file.read()
+    if len(raw) > _MAX_CSV_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds maximum size of {_MAX_CSV_BYTES // (1024 * 1024)} MB.",
+        )
+
+    try:
+        text = raw.decode("utf-8-sig")  # strip BOM if present
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+
+    reader = csv.DictReader(io.StringIO(text))
+    columns: list[str] = list(reader.fieldnames or [])
+    if not columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CSV file has no header row or could not be parsed.",
+        )
+
+    preview_rows: list[UploadPreviewRow] = []
+    valid = 0
+    invalid = 0
+    total = 0
+
+    for i, row in enumerate(reader):
+        if i >= _MAX_CSV_ROWS:
+            break
+        total += 1
+        row_error: Optional[str] = None
+        # Basic validation: check any column likely to contain a phone has a value
+        has_phone_candidate = any(
+            "phone" in col.lower() or "mobile" in col.lower() or "number" in col.lower()
+            for col in columns
+        )
+        if has_phone_candidate:
+            phone_cols = [
+                col
+                for col in columns
+                if "phone" in col.lower() or "mobile" in col.lower() or "number" in col.lower()
+            ]
+            if not any(row.get(col, "").strip() for col in phone_cols):
+                row_error = "No phone number found"
+                invalid += 1
+            else:
+                valid += 1
+        else:
+            valid += 1
+
+        if len(preview_rows) < 20:
+            preview_rows.append(
+                UploadPreviewRow(row_number=i + 1, data=dict(row), error=row_error)
+            )
+
+    return UploadPreviewResponse(
+        total_rows=total,
+        valid_rows=valid,
+        invalid_rows=invalid,
+        columns=columns,
+        preview=preview_rows,
+    )
+
+
+@router.post("/upload/import", status_code=status.HTTP_201_CREATED)
+async def import_sheet(
+    file: UploadFile = File(...),
+    campaign_id: str = Query(...),
+    phone_column: str = Query(...),
+    name_column: Optional[str] = Query(None),
+    email_column: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_tenant_scoped_db),
+    user: dict = Depends(_require_client_admin),
+) -> dict:
+    """Import contacts from a CSV into a campaign.
+
+    For each valid row:
+    1. Upsert the Customer record (same upsert-by-phone as POST /client/customers).
+    2. Create a CampaignContact linking the customer to the campaign.
+    3. Update Campaign.total_contacts.
+
+    The actual call initiation (queue → dial) is triggered separately by
+    updating the campaign status to 'running' via PUT /client/campaigns/{id}.
+    """
+    client_id = user["client_id"]
+
+    # Verify campaign belongs to this tenant
+    campaign = await db.get(Campaign, campaign_id)
+    if not campaign or campaign.client_id != client_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    if campaign.status not in ("draft", "scheduled"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot import contacts into a campaign with status '{campaign.status}'.",
+        )
+
+    raw = await file.read()
+    if len(raw) > _MAX_CSV_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File too large.",
+        )
+
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+
+    reader = csv.DictReader(io.StringIO(text))
+    imported = 0
+    skipped = 0
+
+    for i, row in enumerate(reader):
+        if i >= _MAX_CSV_ROWS:
+            break
+
+        phone_raw = row.get(phone_column, "").strip()
+        if not phone_raw:
+            skipped += 1
+            continue
+
+        # Normalise phone: ensure it starts with +
+        phone = phone_raw if phone_raw.startswith("+") else f"+{phone_raw}"
+        name = (row.get(name_column or "", "") or "").strip() or None
+        email = (row.get(email_column or "", "") or "").strip() or None
+
+        # Upsert customer
+        existing = (
+            await db.execute(
+                select(Customer).where(
+                    Customer.client_id == client_id,
+                    Customer.phone == phone,
+                )
+            )
+        ).scalar_one_or_none()
+
+        if existing:
+            customer = existing
+            if name:
+                customer.name = name
+            if email:
+                customer.email = email
+        else:
+            customer = Customer(
+                id=str(_uuid.uuid4()),
+                client_id=client_id,
+                name=name,
+                phone=phone,
+                email=email,
+            )
+            db.add(customer)
+            await db.flush()
+
+        # Create campaign contact
+        contact = CampaignContact(
+            id=str(_uuid.uuid4()),
+            campaign_id=campaign_id,
+            customer_id=customer.id,
+            row_data={k: v for k, v in row.items()},
+        )
+        db.add(contact)
+        imported += 1
+
+    campaign.total_contacts = (campaign.total_contacts or 0) + imported
+    await db.commit()
+
+    return {"imported": imported, "skipped": skipped, "campaign_id": campaign_id}

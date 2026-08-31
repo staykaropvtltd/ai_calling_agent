@@ -172,7 +172,7 @@ function RecentCallsList({
               <div className="text-xs text-slate-neutral">{c.phone_number ?? "—"}</div>
             </div>
             <div className="ml-4 shrink-0 text-right">
-              <StatusBadge value="completed" />
+              <StatusBadge value={c.status ?? "pending"} />
               <div className="mt-0.5 text-[10px] text-slate-neutral">
                 {formatDateTime(c.created_at)}
               </div>

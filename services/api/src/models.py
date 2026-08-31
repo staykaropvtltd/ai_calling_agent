@@ -461,3 +461,78 @@ class PhoneNumberRoute(Base):
     agent_id = Column(String(255), nullable=False)
     provider = Column(String(50), server_default="exotel")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Campaign(Base):
+    """
+    An outbound calling campaign: a named set of contacts + a calling
+    workflow + schedule. Campaigns are tenant-scoped (client_id) and
+    isolated by the same RLS policy as call_requests.
+
+    status lifecycle: draft → scheduled → running → paused → completed | cancelled
+    """
+
+    __tablename__ = "campaigns"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    purpose = Column(String(255), nullable=True)
+    status = Column(String(20), nullable=False, server_default="draft")
+    # Calling schedule (nullable = immediate / manual start)
+    scheduled_at = Column(DateTime(timezone=True), nullable=True)
+    # Retry config
+    max_retries = Column(Integer, nullable=False, server_default="2")
+    retry_delay_minutes = Column(Integer, nullable=False, server_default="60")
+    # Progress counters — updated as call jobs complete
+    total_contacts = Column(Integer, nullable=False, server_default="0")
+    queued_count = Column(Integer, nullable=False, server_default="0")
+    completed_count = Column(Integer, nullable=False, server_default="0")
+    failed_count = Column(Integer, nullable=False, server_default="0")
+    no_answer_count = Column(Integer, nullable=False, server_default="0")
+    created_by = Column(String(36), ForeignKey("admin_users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'scheduled', 'running', 'paused', 'completed', 'cancelled')",
+            name="ck_campaigns_status",
+        ),
+        Index("idx_campaigns_client_id", "client_id"),
+    )
+
+    client = relationship("Client")
+    contacts = relationship("CampaignContact", back_populates="campaign", cascade="all, delete-orphan")
+
+
+class CampaignContact(Base):
+    """
+    One row per contact in a campaign. Tracks per-contact call state.
+    customer_id links to the canonical Customer record.
+    """
+
+    __tablename__ = "campaign_contacts"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
+    campaign_id = Column(String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False)
+    customer_id = Column(String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
+    # Extra per-row data from the uploaded sheet (JSONB dict of column→value)
+    row_data = Column(_JSONB, nullable=True)
+    status = Column(String(20), nullable=False, server_default="queued")
+    attempts = Column(Integer, nullable=False, server_default="0")
+    call_request_id = Column(Integer, ForeignKey("call_requests.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'dialing', 'completed', 'failed', 'no_answer', 'skipped')",
+            name="ck_campaign_contacts_status",
+        ),
+        Index("idx_campaign_contacts_campaign_id", "campaign_id"),
+    )
+
+    campaign = relationship("Campaign", back_populates="contacts")
+    customer = relationship("Customer")

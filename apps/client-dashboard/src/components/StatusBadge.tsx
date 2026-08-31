@@ -1,19 +1,36 @@
 const MAP: Record<string, { bg: string; text: string; label?: string }> = {
+  // System / account statuses
   active: { bg: "bg-emerald-50 border border-emerald-200", text: "text-emerald-700", label: "Active" },
   inactive: { bg: "bg-fog border border-mist", text: "text-slate-neutral", label: "Inactive" },
   suspended: { bg: "bg-amber-50 border border-amber-200", text: "text-amber-700", label: "Suspended" },
-  pending: { bg: "bg-blue-50 border border-blue-200", text: "text-blue-700", label: "Pending" },
-  failed: { bg: "bg-red-50 border border-red-200", text: "text-red-700", label: "Failed" },
+  // Call lifecycle statuses (Caller.status — call_requests table)
+  pending: { bg: "bg-fog border border-mist", text: "text-steel", label: "Pending" },
+  queued: { bg: "bg-blue-50 border border-blue-200", text: "text-blue-700", label: "Queued" },
+  dialing: { bg: "bg-blue-50 border border-blue-200", text: "text-blue-700", label: "Dialing" },
+  ringing: { bg: "bg-blue-50 border border-blue-200", text: "text-blue-700", label: "Ringing" },
+  connected: { bg: "bg-emerald-50 border border-emerald-200", text: "text-emerald-700", label: "Connected" },
+  in_progress: { bg: "bg-emerald-50 border border-emerald-200", text: "text-emerald-700", label: "In Progress" },
   completed: { bg: "bg-emerald-50 border border-emerald-200", text: "text-emerald-700", label: "Completed" },
+  failed: { bg: "bg-red-50 border border-red-200", text: "text-red-700", label: "Failed" },
+  cancelled: { bg: "bg-fog border border-mist", text: "text-slate-neutral", label: "Cancelled" },
+  no_answer: { bg: "bg-amber-50 border border-amber-200", text: "text-amber-700", label: "No Answer" },
+  voicemail: { bg: "bg-fog border border-mist", text: "text-steel", label: "Voicemail" },
+  // Job statuses
   processing: { bg: "bg-blue-50 border border-blue-200", text: "text-blue-700", label: "Processing" },
-  queued: { bg: "bg-fog border border-mist", text: "text-steel", label: "Queued" },
   retrying: { bg: "bg-amber-50 border border-amber-200", text: "text-amber-700", label: "Retrying" },
+  // Campaign statuses
+  draft: { bg: "bg-fog border border-mist", text: "text-steel", label: "Draft" },
+  running: { bg: "bg-emerald-50 border border-emerald-200", text: "text-emerald-700", label: "Running" },
+  paused: { bg: "bg-amber-50 border border-amber-200", text: "text-amber-700", label: "Paused" },
+  // User roles
   super_admin: { bg: "bg-graphite", text: "text-white", label: "Super Admin" },
   tenant_admin: { bg: "bg-steel", text: "text-white", label: "Admin" },
   agent: { bg: "bg-fog border border-mist", text: "text-steel", label: "Agent" },
+  // Plans
   starter: { bg: "bg-fog border border-mist", text: "text-steel", label: "Starter" },
   pro: { bg: "bg-ivory border border-[#d9d4cb]", text: "text-brass", label: "Pro" },
   enterprise: { bg: "bg-graphite", text: "text-white", label: "Enterprise" },
+  // Misc
   coming_soon: { bg: "bg-fog border border-mist", text: "text-slate-neutral", label: "Coming soon" },
   available: { bg: "bg-ivory border border-[#d9d4cb]", text: "text-brass", label: "Available" },
 };

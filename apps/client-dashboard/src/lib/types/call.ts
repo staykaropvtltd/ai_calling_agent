@@ -1,7 +1,6 @@
-// Matches GET /admin/calls' CallResponse (services/api/src/routers/admin.py).
-// This is the legacy call_requests log (the Caller model) — NOT the real
-// call lifecycle (Call/CallTurn/CallEvent), which no /admin/* endpoint
-// exposes yet.
+// Matches GET /client/calls and GET /client/calls/{id} (CallResponse in
+// services/api/src/routers/client.py). Includes Phase 1 fields added in
+// migration c3d4e5f6a7b8.
 export interface CallLogEntry {
   id: number;
   customer_name: string | null;
@@ -9,13 +8,28 @@ export interface CallLogEntry {
   hotel_name: string | null;
   check_in_date: string | null;
   check_out_date: string | null;
-  client_id: number | null;
   created_at: string | null; // ISO8601
+  // Phase 1 fields
+  status: string | null; // pending|queued|dialing|ringing|connected|in_progress|completed|failed|cancelled|no_answer|voicemail
+  call_type: string | null; // inbound|outbound
+  is_simulation: boolean | null;
+  customer_id: string | null;
+  connection_status: string | null; // not_attempted|attempted|connected|failed_pre_connect
+  failure_reason: string | null;
+  duration_seconds: number | null;
+  outcome: string | null;
 }
 
-// Matches POST /call's CallerRequest (services/api/src/main.py). Any
-// authenticated role may place a call — there is no admin-role gate on
-// this endpoint.
+// One turn in a call conversation (CallTurn model).
+export interface CallTurn {
+  turn_id: string;
+  speaker: "caller" | "agent";
+  text: string;
+  started_at: string; // ISO8601
+  language_code: string | null;
+}
+
+// Matches POST /call's CallerRequest (services/api/src/main.py).
 export interface CreateCallRequest {
   customer_name: string;
   phone_number: string; // E.164, e.g. +919876543210
