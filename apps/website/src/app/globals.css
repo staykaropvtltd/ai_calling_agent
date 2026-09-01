@@ -1,0 +1,284 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-display: "PolySans", "Inter Tight", "Space Grotesk", "Inter", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: #ffffff;
+  color: #202020;
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+/* Asymmetric card — signature shape */
+.card-asymmetric {
+  border-radius: 6px 0px 0px 0px;
+}
+
+/* Section rhythm */
+.section {
+  padding-top: 120px;
+  padding-bottom: 120px;
+}
+
+/* ── Animations ─────────────────────────────────────────────────────────────── */
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.75s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.75s ease both;
+}
+
+.anim-delay-1 { animation-delay: 0.10s; }
+.anim-delay-2 { animation-delay: 0.22s; }
+.anim-delay-3 { animation-delay: 0.34s; }
+.anim-delay-4 { animation-delay: 0.46s; }
+.anim-delay-5 { animation-delay: 0.58s; }
+
+/* Ember underline for inline links */
+.link-ember {
+  text-decoration-line: underline;
+  text-decoration-color: #ff682c;
+  text-underline-offset: 3px;
+}
+
+/* ── Scroll-driven reveal ─────────────────────────────────────────────────── */
+
+@keyframes revealUp {
+  from { opacity: 0; transform: translateY(56px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes revealLeft {
+  from { opacity: 0; transform: translateX(-56px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes revealRight {
+  from { opacity: 0; transform: translateX(56px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes revealScale {
+  from { opacity: 0; transform: scale(0.86) translateY(28px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.scroll-reveal {
+  animation-name: revealUp;
+  animation-fill-mode: both;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-duration: 0.9s;
+  animation-timeline: view();
+  animation-range: entry 0% entry 42%;
+}
+.scroll-reveal-left {
+  animation-name: revealLeft;
+  animation-fill-mode: both;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-duration: 0.9s;
+  animation-timeline: view();
+  animation-range: entry 0% entry 42%;
+}
+.scroll-reveal-right {
+  animation-name: revealRight;
+  animation-fill-mode: both;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-duration: 0.9s;
+  animation-timeline: view();
+  animation-range: entry 0% entry 42%;
+}
+.scroll-reveal-scale {
+  animation-name: revealScale;
+  animation-fill-mode: both;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-duration: 0.9s;
+  animation-timeline: view();
+  animation-range: entry 0% entry 42%;
+}
+
+/* ── Floating stat cards ─────────────────────────────────────────────────── */
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-16px); }
+}
+@keyframes floatAlt {
+  0%, 100% { transform: translateY(-8px) rotate(-0.7deg); }
+  50%       { transform: translateY(8px) rotate(0.7deg); }
+}
+@keyframes floatB {
+  0%, 100% { transform: translateY(0px) rotate(0.4deg); }
+  50%       { transform: translateY(-11px) rotate(-0.4deg); }
+}
+
+.stat-card-1 {
+  animation:
+    fadeUp 0.75s cubic-bezier(0.22, 1, 0.36, 1) 0.34s both,
+    float 7s ease-in-out 1.5s infinite;
+}
+.stat-card-2 {
+  animation:
+    fadeUp 0.75s cubic-bezier(0.22, 1, 0.36, 1) 0.46s both,
+    floatAlt 8.5s ease-in-out 2s infinite;
+}
+.stat-card-3 {
+  animation:
+    fadeUp 0.75s cubic-bezier(0.22, 1, 0.36, 1) 0.58s both,
+    floatB 6.5s ease-in-out 2.5s infinite;
+}
+
+/* ── Live call pulse ring ─────────────────────────────────────────────────── */
+
+@keyframes pulseRing {
+  0%   { box-shadow: 0 0 0 0 rgba(255, 104, 44, 0.65); }
+  70%  { box-shadow: 0 0 0 10px rgba(255, 104, 44, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 104, 44, 0); }
+}
+.pulse-ring {
+  border-radius: 50%;
+  animation: pulseRing 1.8s ease-out infinite;
+}
+
+/* ── Shimmer ember text ───────────────────────────────────────────────────── */
+
+@keyframes shimmerText {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.shimmer-ember {
+  text-decoration-line: underline;
+  text-decoration-color: #ff682c;
+  text-underline-offset: 4px;
+  background: linear-gradient(
+    90deg,
+    #ff682c 0%,
+    #ffb347 28%,
+    #ff9650 42%,
+    #ff682c 56%,
+    #ffb347 72%,
+    #ff682c 100%
+  );
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmerText 3.5s linear infinite;
+}
+
+/* ── Animated dot-grid hero background ───────────────────────────────────── */
+
+@keyframes gridDrift {
+  0%   { background-position: 0 0; }
+  100% { background-position: 48px 48px; }
+}
+.animated-grid {
+  background-image: radial-gradient(circle, rgba(32, 32, 32, 0.05) 1px, transparent 1px);
+  background-size: 48px 48px;
+  animation: gridDrift 14s linear infinite;
+}
+
+/* ── Gradient orb drift ──────────────────────────────────────────────────── */
+
+@keyframes orbDrift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%       { transform: translate(50px, -50px) scale(1.1); }
+  66%       { transform: translate(-35px, 30px) scale(0.92); }
+}
+@keyframes orbDriftAlt {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  40%       { transform: translate(-60px, 40px) scale(1.14); }
+  75%       { transform: translate(40px, -25px) scale(0.88); }
+}
+
+/* ── Hover lift on cards ─────────────────────────────────────────────────── */
+
+.hover-lift {
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.35s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-10px);
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.11);
+}
+
+/* ── Scroll-driven connector line draw ───────────────────────────────────── */
+
+@keyframes drawLine {
+  from { width: 0; }
+  to   { width: 100%; }
+}
+.draw-line {
+  animation-name: drawLine;
+  animation-fill-mode: both;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-duration: 1.1s;
+  animation-timeline: view();
+  animation-range: entry 10% entry 65%;
+  width: 0;
+}
+
+/* ── Waveform audio bars ─────────────────────────────────────────────────── */
+
+@keyframes waveBar1 {
+  0%, 100% { transform: scaleY(0.35); }
+  50%       { transform: scaleY(1); }
+}
+@keyframes waveBar2 {
+  0%, 100% { transform: scaleY(1); }
+  50%       { transform: scaleY(0.2); }
+}
+@keyframes waveBar3 {
+  0%, 100% { transform: scaleY(0.55); }
+  50%       { transform: scaleY(0.95); }
+}
+@keyframes waveBar4 {
+  0%, 100% { transform: scaleY(0.15); }
+  50%       { transform: scaleY(0.8); }
+}
+.waveform-bar {
+  width: 3px;
+  flex: none;
+  border-radius: 2px;
+  background: rgba(255, 104, 44, 0.72);
+  transform-origin: bottom center;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}

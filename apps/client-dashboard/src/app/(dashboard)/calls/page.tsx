@@ -13,6 +13,7 @@ import { ErrorBanner } from "../../../components/ErrorBanner";
 import { Spinner } from "../../../components/Spinner";
 import { PageHeader } from "../../../components/PageHeader";
 import { Button } from "../../../components/Button";
+import { StatusBadge } from "../../../components/StatusBadge";
 import type { CallLogEntry } from "../../../lib/types/call";
 
 export default function CallsPage() {
@@ -51,9 +52,20 @@ function CallsList() {
       ),
     },
     { key: "phone_number", header: "Phone", render: (c) => c.phone_number ?? "—" },
-    { key: "hotel_name", header: "Hotel", render: (c) => c.hotel_name ?? "—" },
-    { key: "check_in_date", header: "Check-in", render: (c) => c.check_in_date ?? "—" },
-    { key: "check_out_date", header: "Check-out", render: (c) => c.check_out_date ?? "—" },
+    { key: "hotel_name", header: "Hotel / Property", render: (c) => c.hotel_name ?? "—" },
+    {
+      key: "status",
+      header: "Status",
+      render: (c) => <StatusBadge value={c.status ?? "pending"} />,
+    },
+    {
+      key: "duration_seconds",
+      header: "Duration",
+      render: (c) =>
+        c.duration_seconds != null
+          ? `${Math.floor(c.duration_seconds / 60)}:${String(c.duration_seconds % 60).padStart(2, "0")}`
+          : "—",
+    },
     {
       key: "created_at",
       header: "Created",

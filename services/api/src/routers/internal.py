@@ -9,10 +9,11 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import INTERNAL_API_TOKEN
-from src.models import Call, PhoneNumberRoute
+from src.models import Call, Caller, Campaign, CampaignContact, PhoneNumberRoute
 from src.tenant import get_internal_service_db
 
 logger = logging.getLogger("staykaro.internal")
@@ -99,6 +100,14 @@ class CallCreateRequest(BaseModel):
     # will appear in client analytics as a genuine call. Defaults to False for
     # backward-compat with gateway versions that pre-date Phase 1.
     is_simulation: bool = False
+    # Outbound-call extensions: set by the integration service, never by the
+    # inbound voice gateway (which sets connection_status via its server_default).
+    # connection_status "not_attempted" signals that the Call record was created
+    # before the call was actually answered — correct for outbound dials where
+    # we record the attempt the moment the Exotel API accepts the request.
+    connection_status: str = "connected"
+    # FK to call_requests.id — links an outbound campaign call to its work-item.
+    call_request_id: Optional[int] = None
 
 
 class CallCreateResponse(BaseModel):
@@ -169,9 +178,8 @@ async def create_call(
         started_at=body.started_at,
         status="active",
         is_simulation=body.is_simulation,
-        # connection_status defaults to 'connected' via model server_default:
-        # the voice gateway only creates a Call record once the call is live,
-        # so the call is already connected at creation time.
+        connection_status=body.connection_status,
+        call_request_id=body.call_request_id,
     )
     db.add(call)
     await db.commit()
@@ -237,6 +245,12 @@ async def finalize_call(
     call.end_reason = body.end_reason
     call.status = new_status
     call.connection_status = new_connection_status
+
+    # ── Cascade to Caller + CampaignContact + Campaign (outbound calls only) ──
+    # call_request_id is set only for outbound campaign calls (never for inbound).
+    if call.call_request_id is not None:
+        await _finalize_outbound_caller(db, call)
+
     await db.commit()
     await db.refresh(call)
     logger.info(
@@ -255,6 +269,152 @@ async def finalize_call(
         ended_at=call.ended_at,
         end_reason=call.end_reason,
     )
+
+
+_CALL_STATUS_TO_CALLER: dict[str, str] = {
+    "completed": "completed",
+    "failed": "failed",
+    "no_answer": "no_answer",
+    "voicemail": "voicemail",
+    "cancelled": "cancelled",
+}
+
+_CALL_STATUS_TO_CONTACT: dict[str, str] = {
+    "completed": "completed",
+    "failed": "failed",
+    "no_answer": "no_answer",
+    "voicemail": "no_answer",
+    "cancelled": "skipped",
+}
+
+
+async def _finalize_outbound_caller(db: AsyncSession, call: Call) -> None:
+    """Update the Caller work-item and its linked CampaignContact + Campaign
+    when an outbound call reaches a terminal state.  Called only when
+    Call.call_request_id is not None (outbound campaign calls exclusively).
+    Must be called *before* the parent transaction commits so all updates land
+    atomically with the Call finalization."""
+    caller = await db.get(Caller, call.call_request_id)
+    if caller is None:
+        logger.warning("finalize_outbound_caller: caller_id=%s not found", call.call_request_id)
+        return
+
+    caller.status = _CALL_STATUS_TO_CALLER.get(call.status, "failed")
+    caller.connection_status = call.connection_status
+    if call.status != "completed":
+        caller.failure_reason = call.end_reason
+    logger.info(
+        "Caller updated: caller_id=%s status=%s connection_status=%s",
+        caller.id, caller.status, caller.connection_status,
+    )
+
+    # ── CampaignContact ───────────────────────────────────────────────────────
+    contact_result = await db.execute(
+        select(CampaignContact).where(CampaignContact.call_request_id == caller.id)
+    )
+    contact = contact_result.scalar_one_or_none()
+    if contact is None:
+        return
+
+    contact.status = _CALL_STATUS_TO_CONTACT.get(call.status, "failed")
+    contact.attempts = (contact.attempts or 0) + 1
+
+    # ── Campaign counters ─────────────────────────────────────────────────────
+    campaign = await db.get(Campaign, contact.campaign_id)
+    if campaign is None:
+        return
+
+    campaign.queued_count = max(0, (campaign.queued_count or 0) - 1)
+    if call.status == "completed":
+        campaign.completed_count = (campaign.completed_count or 0) + 1
+    elif call.status == "failed":
+        campaign.failed_count = (campaign.failed_count or 0) + 1
+    elif call.status in ("no_answer", "voicemail"):
+        campaign.no_answer_count = (campaign.no_answer_count or 0) + 1
+
+    # Auto-complete the campaign when every contact has a terminal status
+    if campaign.queued_count == 0 and campaign.status == "running":
+        done = (
+            (campaign.completed_count or 0)
+            + (campaign.failed_count or 0)
+            + (campaign.no_answer_count or 0)
+        )
+        if done >= (campaign.total_contacts or 0) and campaign.total_contacts > 0:
+            campaign.status = "completed"
+            logger.info("Campaign auto-completed: campaign_id=%s", campaign.id)
+
+    logger.info(
+        "Campaign counters updated: campaign_id=%s queued=%s completed=%s failed=%s no_answer=%s",
+        campaign.id, campaign.queued_count, campaign.completed_count,
+        campaign.failed_count, campaign.no_answer_count,
+    )
+
+
+# ── Caller status update (called by integration-service after outbound dial) ──
+
+
+class CallerDialedRequest(BaseModel):
+    """Sent by integration-service immediately after Exotel accepts the dial.
+    Stores the provider-assigned call ID and marks the work-item as 'dialing'."""
+    telephony_call_id: str
+    is_simulation: bool = False
+
+
+@router.patch("/call-requests/{caller_id}/dialed", status_code=status.HTTP_200_OK)
+async def mark_caller_dialed(
+    caller_id: int,
+    body: CallerDialedRequest,
+    db: AsyncSession = Depends(get_internal_service_db),
+) -> dict:
+    """Update a Caller (call_request) record once the outbound dial is
+    accepted by Exotel.  Sets status='dialing', links the telephony Call
+    record UUID, and propagates is_simulation so that simulation calls
+    are never counted as real calls in analytics."""
+    caller = await db.get(Caller, caller_id)
+    if caller is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Caller not found")
+    caller.status = "dialing"
+    caller.telephony_call_id = body.telephony_call_id
+    caller.is_simulation = body.is_simulation
+    await db.commit()
+    logger.info(
+        "Caller marked dialed: caller_id=%s telephony_call_id=%s is_simulation=%s",
+        caller_id, body.telephony_call_id, body.is_simulation,
+    )
+    return {"caller_id": caller_id, "status": "dialing"}
+
+
+# ── Call lookup by provider_call_id (for outbound webhook resolution) ─────────
+
+
+class CallByProviderResponse(BaseModel):
+    call_id: str
+    tenant_id: str
+    agent_id: str
+    provider_call_id: Optional[str]
+    status: str
+    connection_status: str
+    is_simulation: bool
+    call_request_id: Optional[int]
+
+    model_config = {"from_attributes": True}
+
+
+@router.get("/calls/by-provider/{provider_call_id}", response_model=CallByProviderResponse)
+async def get_call_by_provider_id(
+    provider_call_id: str,
+    db: AsyncSession = Depends(get_internal_service_db),
+) -> Call:
+    """Look up a Call record by the telephony provider's own call identifier
+    (Exotel CallSid).  Used by the outbound webhook handler to map provider
+    events to our internal call records without keeping in-process state that
+    would not survive a gateway restart."""
+    call = (
+        await db.execute(select(Call).where(Call.provider_call_id == provider_call_id))
+    ).scalar_one_or_none()
+    if call is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
+    return call
 
 
 @router.get("/phone-routes/{number}", response_model=PhoneRouteResponse)

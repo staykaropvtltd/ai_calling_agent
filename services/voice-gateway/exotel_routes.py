@@ -293,4 +293,109 @@ def build_exotel_router(
 
         return {"status": "ignored", "call_id": ""}
 
+    # ── Outbound call status callbacks ─────────────────────────────────────────
+    # Exotel posts events to this URL (configured as StatusCallback when the
+    # integration-service places the outbound dial).  Outbound calls differ
+    # from inbound in one key way: the Call record already exists before the
+    # first webhook arrives (created by the integration-service), so we look
+    # it up by provider_call_id rather than creating a new one.
+
+    @router.api_route("/outbound-callback", methods=["GET", "POST"])
+    async def outbound_callback(
+        request: Request,
+        x_exotel_webhook_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, str]:
+        token = x_exotel_webhook_token or request.query_params.get("token")
+        if not token or not hmac.compare_digest(token, settings.webhook_token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="invalid Exotel outbound callback authentication",
+            )
+
+        raw: dict = dict(request.query_params)
+        raw.pop("token", None)
+        try:
+            if request.method == "POST":
+                content_type = request.headers.get("content-type", "")
+                if "application/x-www-form-urlencoded" in content_type:
+                    form = await request.form()
+                    raw.update({k: v for k, v in dict(form).items() if v not in (None, "")})
+                elif content_type.startswith("application/json"):
+                    body = await request.json()
+                    if isinstance(body, dict):
+                        raw.update({k: v for k, v in body.items() if v not in (None, "")})
+            payload = ExotelCallback.model_validate(raw)
+        except (ValueError, ValidationError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid outbound callback body",
+            ) from exc
+
+        # Dedup via durable EventRecorder (same guarantee as inbound callback).
+        try:
+            is_duplicate = await _events.record(
+                provider_call_id=payload.provider_call_id,
+                event_type="outbound_" + payload.event.lower(),
+                payload={
+                    "dialed_number": payload.dialed_number,
+                    "call_status": payload.call_status,
+                },
+            )
+        except InternalApiError as exc:
+            raise HTTPException(
+                status_code=503, detail="durable event recording unavailable"
+            ) from exc
+        if is_duplicate:
+            return {"status": "duplicate", "provider_call_id": payload.provider_call_id}
+
+        # Resolve the pre-existing Call record via the provider call ID.
+        try:
+            call_state = await calls.get_by_provider_id(payload.provider_call_id)
+        except InternalApiError as exc:
+            raise HTTPException(
+                status_code=503, detail="internal calls API unavailable"
+            ) from exc
+
+        if call_state is None:
+            # Not a call we placed — could be a delayed retry of an inbound
+            # webhook that was mis-routed here. Ignore safely.
+            return {"status": "ignored", "detail": "unknown outbound provider_call_id"}
+
+        event_lower = payload.event.lower()
+
+        # "connected"/"answered" — remote party picked up; no Pipecat session
+        # is started for outbound campaigns (AI voice is a separate pipeline
+        # concern).  We simply acknowledge the event so Exotel doesn't retry.
+        if event_lower in {"connected", "start", "answered", "started"}:
+            return {"status": "acknowledged", "call_id": call_state.call_id}
+
+        # Terminal events — finalize the Call record.  _finalize_outbound_caller
+        # (inside services/api's finalize endpoint) cascades the status update
+        # to the linked Caller, CampaignContact, and Campaign counters.
+        if event_lower in {"completed", "failed", "disconnected", "terminal"}:
+            call_status = (payload.call_status or "").lower()
+            is_failure = event_lower == "failed" or call_status in {
+                "failed", "busy", "no-answer"
+            }
+            end_reason = "provider_failure" if is_failure else "caller_hangup"
+            if call_status == "no-answer":
+                end_reason = "no_answer"
+
+            try:
+                await calls.finalize(
+                    call_state.call_id,
+                    CallFinalization(
+                        ended_at=datetime.now(UTC),
+                        end_reason=end_reason,
+                    ),
+                )
+            except InternalApiError as exc:
+                raise HTTPException(
+                    status_code=503, detail="internal call finalization unavailable"
+                ) from exc
+
+            return {"status": "finalized", "call_id": call_state.call_id}
+
+        return {"status": "ignored", "call_id": call_state.call_id}
+
     return router

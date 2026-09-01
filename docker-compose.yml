@@ -445,6 +445,47 @@ services:
       - all
 
   # ==========================================
+  # Website — Next.js public marketing site
+  # Serves at / (root path). No basePath.
+  # Login page routes visitors to /client/ or /admin/.
+  # ==========================================
+  website:
+    build:
+      context: ./apps/website
+      dockerfile: Dockerfile
+
+    container_name: staykaro-website
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:3002:3000"
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-qO-",
+          "http://127.0.0.1:3000/"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    networks:
+      - staykaro-network
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    profiles:
+      - all
+
+  # ==========================================
   # Admin Dashboard — Next.js (NH-06/07/08)
   # Owner: Nihal
   # ==========================================

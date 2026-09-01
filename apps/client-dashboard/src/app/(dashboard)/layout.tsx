@@ -26,6 +26,14 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/", label: "Overview", roles: ["tenant_admin", "agent"], exact: true },
       { href: "/calls", label: "Calls", roles: ["tenant_admin", "agent"] },
       { href: "/calls/new", label: "New Call", roles: ["tenant_admin", "agent"] },
+      { href: "/contacts", label: "Contacts", roles: ["tenant_admin", "agent"] },
+    ],
+  },
+  {
+    label: "Campaigns",
+    items: [
+      { href: "/campaigns", label: "Campaigns", roles: ["tenant_admin"] },
+      { href: "/upload", label: "Sheet Upload", roles: ["tenant_admin"] },
     ],
   },
   {
@@ -37,9 +45,8 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Management",
     items: [
-      { href: "/ai-agent", label: "AI Agent", roles: ["tenant_admin"] },
+      { href: "/ai-agent", label: "AI Agent Config", roles: ["tenant_admin"] },
       { href: "/phone-numbers", label: "Phone Numbers", roles: ["tenant_admin"] },
-      { href: "/campaigns", label: "Campaigns", roles: ["tenant_admin"] },
       { href: "/business-hours", label: "Business Hours", roles: ["tenant_admin"] },
       { href: "/users", label: "Users & Roles", roles: ["tenant_admin"] },
       { href: "/integrations", label: "Integrations", roles: ["tenant_admin"] },

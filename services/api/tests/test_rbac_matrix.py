@@ -78,6 +78,44 @@ _OPEN_TO_ANY_AUTHENTICATED_ROLE: list[tuple[str, str, dict | None]] = [
 
 _ALL_ROLES = ("agent", "tenant_admin", "super_admin")
 
+# /client/* routes — accessible to tenant_admin and agent only.
+# super_admin gets 403 (explicitly blocked by _require_client).
+# Routes that also require tenant_admin (via _require_client_admin) are marked
+# with a narrower allowed set.
+_CLIENT_ROUTES: list[tuple[str, str, dict | None, frozenset[str]]] = [
+    # Customer CRUD — accessible to both tenant_admin and agent
+    (
+        "GET",
+        "/client/customers",
+        None,
+        frozenset({"tenant_admin", "agent"}),
+    ),
+    (
+        "POST",
+        "/client/customers",
+        {"phone": "+971509999999"},
+        frozenset({"tenant_admin", "agent"}),
+    ),
+    (
+        "GET",
+        "/client/customers/nonexistent-uuid",
+        None,
+        frozenset({"tenant_admin", "agent"}),
+    ),
+    (
+        "PUT",
+        "/client/customers/nonexistent-uuid",
+        {"name": "X"},
+        frozenset({"tenant_admin", "agent"}),
+    ),
+    # Call log — accessible to both
+    ("GET", "/client/calls", None, frozenset({"tenant_admin", "agent"})),
+    # Analytics — tenant_admin only
+    ("GET", "/client/analytics", None, frozenset({"tenant_admin"})),
+    # Users — tenant_admin only
+    ("GET", "/client/users", None, frozenset({"tenant_admin"})),
+]
+
 
 def _token_for(role: str) -> str:
     payload = {
@@ -146,6 +184,35 @@ async def test_open_route_allows_every_authenticated_role(
         401,
         403,
     ), f"{method} {path}: role={role} should never be RBAC-rejected here, got {r.status_code}"
+
+
+@pytest.mark.parametrize("method,path,body,allowed_roles", _CLIENT_ROUTES)
+async def test_client_route_rejects_unauthenticated(
+    api_client: AsyncClient, method: str, path: str, body, allowed_roles
+):
+    r = await api_client.request(method, path, json=body if body is not None else {})
+    assert r.status_code == 401, (
+        f"{method} {path} (no token) returned {r.status_code}, expected 401"
+    )
+
+
+@pytest.mark.parametrize("method,path,body,allowed_roles", _CLIENT_ROUTES)
+@pytest.mark.parametrize("role", _ALL_ROLES)
+async def test_client_route_role_gate(
+    api_client: AsyncClient, method: str, path: str, body, allowed_roles, role: str
+):
+    r = await api_client.request(
+        method, path, json=body if body is not None else {}, headers=_headers(role)
+    )
+    if role in allowed_roles:
+        assert r.status_code != 403, (
+            f"{method} {path}: role={role} should be allowed past RBAC but got 403"
+        )
+        assert r.status_code != 401
+    else:
+        assert r.status_code == 403, (
+            f"{method} {path}: role={role} should be rejected but got {r.status_code}"
+        )
 
 
 async def test_tampered_jwt_signature_rejected_on_every_admin_route(api_client: AsyncClient):
