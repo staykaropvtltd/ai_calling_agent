@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import INTERNAL_API_TOKEN
-from src.models import Call, Caller, Campaign, CampaignContact, CallJob, PhoneNumberRoute
+from src.models import Call, Caller, Campaign, CampaignContact, PhoneNumberRoute
 from src.tenant import get_internal_service_db
 
 logger = logging.getLogger("staykaro.internal")

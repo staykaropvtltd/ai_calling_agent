@@ -207,7 +207,7 @@ def _handle_outbound_dial(body: ProcessEventRequest) -> ProcessEventResponse:
     caller_id: int | None = payload.get("caller_id")
     phone_number: str = payload.get("phone_number", "")
     tenant_id: str = payload.get("tenant_id") or body.tenant_id or ""
-    campaign_id: str = payload.get("campaign_id", "")
+
 
     if caller_id is None:
         raise HTTPException(

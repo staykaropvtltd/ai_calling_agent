@@ -9,14 +9,13 @@ alembic/versions/df467b3bdd3f) provides a second independent enforcement layer
 via get_tenant_scoped_db.
 """
 
-import logging
-import math
-from datetime import UTC, datetime, timedelta
-from typing import Optional
-
 import csv
 import io
+import logging
+import math
 import uuid as _uuid
+from datetime import UTC, datetime, timedelta
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
@@ -25,7 +24,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import get_current_user
 from src.database import get_db
-from src.models import Call, CallJob, CallTurn, Campaign, CampaignContact, Caller, Client, Customer, PhoneNumberRoute, User
+from src.models import (
+    Call,
+    Caller,
+    CallJob,
+    CallTurn,
+    Campaign,
+    CampaignContact,
+    Client,
+    Customer,
+    PhoneNumberRoute,
+    User,
+)
 from src.tenant import get_tenant_scoped_db
 
 logger = logging.getLogger("staykaro.client")
@@ -870,7 +880,6 @@ async def _queue_campaign_contacts(db: AsyncSession, campaign: Campaign, client_
     no call_request_id) and retry-eligible contacts (failed/no_answer,
     attempts < max_retries).  All writes land in the same transaction as the
     campaign status update so no contacts are silently dropped on failure."""
-    from datetime import UTC, datetime
 
     # Fresh contacts: imported but never dialled
     fresh_result = await db.execute(
@@ -1144,7 +1153,7 @@ async def import_sheet(
             id=str(_uuid.uuid4()),
             campaign_id=campaign_id,
             customer_id=customer.id,
-            row_data={k: v for k, v in row.items()},
+            row_data=dict(row),
         )
         db.add(contact)
         imported += 1

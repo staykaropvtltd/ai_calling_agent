@@ -12,7 +12,7 @@ from httpx import AsyncClient
 from jose import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models import Client, Customer
+from src.models import Client
 
 pytestmark = pytest.mark.asyncio
 

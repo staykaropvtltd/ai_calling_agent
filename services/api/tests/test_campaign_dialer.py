@@ -18,7 +18,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models import Call, CallJob, Caller, Campaign, CampaignContact, Client, Customer
+from src.models import Call, Caller, Campaign, CampaignContact, Client, Customer
 
 pytestmark = pytest.mark.asyncio
 
@@ -324,7 +324,7 @@ async def test_finalize_call_updates_campaign_counters(
     await db_session.commit()
 
     caller = await _seed_caller(db_session, client_id=client.id, status="dialing")
-    contact = await _seed_contact(
+    await _seed_contact(
         db_session,
         campaign_id=camp.id,
         customer_id=cust.id,

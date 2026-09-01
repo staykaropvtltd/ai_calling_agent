@@ -14,8 +14,8 @@ RLS tenant isolation: same pattern as call_requests and customers
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision: str = "d4e5f6a7b8c9"

@@ -196,8 +196,6 @@ def test_outbound_dial_simulation_fails_closed_when_api_unreachable(monkeypatch)
         monkeypatch.delenv(key, raising=False)
 
     # Re-import os inside the module so the patched values are visible
-    import importlib
-    import sys
     # The module reads env vars at call-time (not import-time), so no reload needed.
     response = client.post(
         "/internal/v1/process",
