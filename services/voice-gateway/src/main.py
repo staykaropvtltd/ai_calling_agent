@@ -294,6 +294,11 @@ class _RedisCallStore:
     Key format: voice_gateway:provider_call:{provider_call_id}
     TTL: 24 hours — stale mappings expire automatically; Exotel calls rarely last longer.
 
+    Shared, unmodified, between the Exotel and Twilio routers — both only
+    ever see their own provider's provider_call_id values (Exotel CallSids
+    vs Twilio CallSids, disjoint ID spaces), so one Redis-backed store safely
+    serves both.
+
     All RedisErrors are suppressed with a warning.  If Redis is unavailable when
     set() is called, the mapping is NOT persisted.  A subsequent end event will
     find nothing in get() and return {"status": "ignored"} — the same degraded
@@ -331,11 +336,12 @@ class _RedisCallStore:
 
 # ── Shared session manager (SH-03 / SH-01) ────────────────────────────────────
 #
-# One instance, shared between the Exotel callback router (creates/ends
-# sessions from call lifecycle events) and the voice WebSocket router (reads
-# the same session when the audio stream connects). Built unconditionally —
-# CP1 (empty call lifecycle) must hold even with no telephony provider
-# configured yet.
+# One instance, shared between the Exotel callback router, the Twilio
+# webhook router (creates/ends sessions from call lifecycle events), and the
+# voice WebSocket router (reads the same session when the audio stream
+# connects, regardless of which provider it came from). Built
+# unconditionally — CP1 (empty call lifecycle) must hold even with no
+# telephony provider configured yet.
 
 _redis_url = os.environ.get("REDIS_URL")
 _shared_redis: _redis_lib.Redis | None = None
@@ -373,7 +379,8 @@ _tts_provider = LocalPyttsx3TTSProvider()
 # Same flag _register_exotel_router() below reads for the dev routing stub —
 # both mean "no real Exotel/routing backing this call, dev/test only". A
 # call_id with no session already created via an authenticated path
-# (Exotel callback or the internal API) is rejected unless this is set.
+# (Exotel callback, Twilio TwiML request, or the internal API) is rejected
+# unless this is set.
 _ws_allow_unresolved = os.environ.get("EXOTEL_DEV_ROUTING", "").lower() in ("1", "true", "yes")
 app.include_router(
     build_voice_router(
@@ -448,7 +455,112 @@ def _register_exotel_router() -> None:
     )
 
 
+def _register_twilio_router() -> None:
+    """Wire the Twilio TwiML + status-callback router into the running app.
+
+    Called once at module load time, mirroring _register_exotel_router()
+    exactly: additive and credential-gated, wrapped in try/except by the
+    caller so the app still starts (without Twilio's endpoints) when Twilio
+    is not yet configured. The Twilio and Exotel routers register
+    independently of each other, and independently of TELEPHONY_PROVIDER
+    (an existing, already-unused env var this does not repurpose as a
+    switch) — both providers' inbound routes can be live on the same
+    gateway instance at the same time, so adding Twilio never removes or
+    disables Exotel's.
+
+    Requires all six of TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN /
+    TWILIO_PHONE_NUMBER / TWILIO_TWIML_URL / TWILIO_STATUS_CALLBACK_URL /
+    VOICE_GATEWAY_WSS_HOST — unlike Exotel's single EXOTEL_WEBHOOK_TOKEN,
+    Twilio's inbound webhook model (signature validation against an exact
+    configured URL, plus building the media-stream URL) genuinely needs all
+    of them to function at all; raising with the full missing list mirrors
+    ExotelSettings.from_environment()'s own "list every missing var" style.
+    """
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+    phone_number = os.environ.get("TWILIO_PHONE_NUMBER", "").strip()
+    twiml_url = os.environ.get("TWILIO_TWIML_URL", "").strip()
+    status_callback_url = os.environ.get("TWILIO_STATUS_CALLBACK_URL", "").strip()
+    gateway_wss_host = os.environ.get("VOICE_GATEWAY_WSS_HOST", "").strip()
+
+    missing = [
+        name
+        for name, value in (
+            ("TWILIO_ACCOUNT_SID", account_sid),
+            ("TWILIO_AUTH_TOKEN", auth_token),
+            ("TWILIO_PHONE_NUMBER", phone_number),
+            ("TWILIO_TWIML_URL", twiml_url),
+            ("TWILIO_STATUS_CALLBACK_URL", status_callback_url),
+            ("VOICE_GATEWAY_WSS_HOST", gateway_wss_host),
+        )
+        if not value
+    ]
+    if missing:
+        raise ValueError("Twilio configuration incomplete, missing: " + ", ".join(missing))
+
+    from internal_calls import (  # noqa: PLC0415
+        EventsClient,
+        InternalCallsClient,
+        InternalPhoneRoutingClient,
+    )
+    from twilio_routes import TwilioWebhookSettings, build_twilio_router  # noqa: PLC0415
+
+    settings = TwilioWebhookSettings(
+        auth_token=auth_token,
+        twiml_url=twiml_url,
+        status_callback_url=status_callback_url,
+        gateway_wss_host=gateway_wss_host,
+    )
+    internal_api_url = os.environ.get("INTERNAL_API_URL", "http://api:8000")
+    calls = InternalCallsClient(base_url=internal_api_url)
+    events = EventsClient(base_url=internal_api_url)
+
+    # Same _RedisCallStore class Exotel's registration builds above — shared
+    # implementation, provider-disjoint keys (see the class docstring).
+    # build_twilio_router() falls back to its own in-memory store when None
+    # is passed, matching _register_exotel_router()'s identical pattern.
+    call_store: _RedisCallStore | None = None
+    if _shared_redis is not None:
+        call_store = _RedisCallStore(_shared_redis)
+    else:
+        logger.warning(
+            "REDIS_URL is not set or Redis is unreachable — "
+            "Twilio provider_call_id mappings are in-memory only and will not survive a restart."
+        )
+
+    if os.environ.get("EXOTEL_DEV_ROUTING", "").lower() in ("1", "true", "yes"):
+        # Reuses the same dev-routing switch and stub Exotel's registration
+        # uses below — TestExotelRoutingStub's logic (route one hardcoded
+        # test number, reject everything else) is not actually
+        # Exotel-specific despite its name; not renamed here to avoid an
+        # unrelated change to dev_routing.py, which Exotel's own
+        # registration also depends on.
+        from dev_routing import TestExotelRoutingStub  # noqa: PLC0415
+
+        routing = TestExotelRoutingStub()
+        logger.warning("EXOTEL_DEV_ROUTING=true — only +917314623519 will be routed (Twilio too)")
+    else:
+        routing = InternalPhoneRoutingClient(internal_api_url)
+
+    app.include_router(
+        build_twilio_router(session_manager, settings, calls, routing, call_store, events)
+    )
+    logger.info(
+        "Twilio router registered at /telephony/twilio/{twiml,status} (internal_api=%s)",
+        internal_api_url,
+    )
+
+
 try:
     _register_exotel_router()
 except Exception as exc:
     logger.warning("Exotel router not registered: %s — set EXOTEL_WEBHOOK_TOKEN to enable.", exc)
+
+try:
+    _register_twilio_router()
+except Exception as exc:
+    logger.warning(
+        "Twilio router not registered: %s — set TWILIO_ACCOUNT_SID/AUTH_TOKEN/PHONE_NUMBER/"
+        "TWIML_URL/STATUS_CALLBACK_URL/VOICE_GATEWAY_WSS_HOST to enable.",
+        exc,
+    )

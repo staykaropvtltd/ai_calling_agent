@@ -57,3 +57,40 @@ class ExotelSettings:
             **values,
             timeout_seconds=float(os.getenv("EXOTEL_TIMEOUT_SECONDS", "10")),
         )
+
+
+@dataclass(frozen=True)
+class TwilioSettings:
+    """Configuration for TwilioProvider (packages/providers/twilio.py).
+
+    Deliberately narrow — only the three variables the task requires
+    (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER), same
+    shape as ExotelSettings. The Twilio *webhook* side (TwiML endpoint,
+    status callback, VOICE_GATEWAY_WSS_HOST) is separate configuration
+    consumed by services/voice-gateway/twilio_routes.py's own
+    TwilioWebhookSettings, not this class — this class is only what the
+    outbound REST provider needs to authenticate and place a call, mirroring
+    the split ExotelSettings (provider) / _ExotelConfig (webhook router in
+    src/main.py) already has.
+    """
+
+    account_sid: str
+    auth_token: str
+    from_number: str
+    timeout_seconds: float = 10.0
+
+    @classmethod
+    def from_environment(cls) -> TwilioSettings:
+        names = {
+            "account_sid": "TWILIO_ACCOUNT_SID",
+            "auth_token": "TWILIO_AUTH_TOKEN",
+            "from_number": "TWILIO_PHONE_NUMBER",
+        }
+        values = {field: os.getenv(name, "").strip() for field, name in names.items()}
+        missing = [name for field, name in names.items() if not values[field]]
+        if missing:
+            raise ProviderError("Missing required Twilio configuration: " + ", ".join(missing))
+        return cls(
+            **values,
+            timeout_seconds=float(os.getenv("TWILIO_TIMEOUT_SECONDS", "10")),
+        )
