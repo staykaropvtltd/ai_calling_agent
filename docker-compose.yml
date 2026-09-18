@@ -276,11 +276,29 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
 
+      # TELEPHONY_PROVIDER is not read by src/main.py — both the Exotel and
+      # Twilio routers register independently, gated only on their own
+      # credentials being present (see _register_exotel_router() /
+      # _register_twilio_router()). Left as-is/unused rather than repurposed
+      # as a switch, so this stays a legacy/reserved knob.
       TELEPHONY_PROVIDER: ${TELEPHONY_PROVIDER:-twilio}
 
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
+      # Full https:// URL Twilio is configured (in the Twilio Console) to
+      # request for TwiML / call this for status updates. Must exactly match
+      # what's configured there — used both as the outbound webhook config
+      # and as the URL X-Twilio-Signature validation is computed against
+      # (see twilio_signature.py — never derived from the incoming request,
+      # which is not safe behind ngrok/a reverse proxy).
+      TWILIO_TWIML_URL: ${TWILIO_TWIML_URL:-}
+      TWILIO_STATUS_CALLBACK_URL: ${TWILIO_STATUS_CALLBACK_URL:-}
+      # Hostname ONLY — no scheme (not "https://" or "wss://"), e.g.
+      # "abc123.ngrok-free.app" or "voice.staykaro.org". Used to build the
+      # wss:// Media Streams URL the /telephony/twilio/twiml response points
+      # Twilio at (see twilio_routes.py::_stream_twiml).
+      VOICE_GATEWAY_WSS_HOST: ${VOICE_GATEWAY_WSS_HOST:-}
 
       # Exotel callback integration (SH-01/SH-02)
       EXOTEL_API_KEY: ${EXOTEL_API_KEY:-}

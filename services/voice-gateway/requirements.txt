@@ -4,6 +4,11 @@ pipecat-ai[websocket]==1.7.0
 uvicorn[standard]==0.30.6
 redis==5.0.8
 
+# Twilio provider (outbound REST client, TwiML building, webhook signature
+# validation) — pinned, matching the rest of this file's convention of
+# exact-pinned third-party SDKs.
+twilio==9.10.9
+
 # Phase 5 — local/offline STT + TTS providers (no external API credentials
 # available in this environment; see stt_provider.py / tts_provider.py).
 faster-whisper==1.2.1

@@ -7,7 +7,9 @@ from .telephony import (
     TelephonyCallRequest,
     TelephonyCallResult,
     TelephonyProvider,
+    TwilioSettings,
 )
+from .twilio import TwilioProvider
 
 __all__ = [
     "ExotelProvider",
@@ -16,4 +18,6 @@ __all__ = [
     "TelephonyCallRequest",
     "TelephonyCallResult",
     "TelephonyProvider",
+    "TwilioProvider",
+    "TwilioSettings",
 ]
